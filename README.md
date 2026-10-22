@@ -1,36 +1,48 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI//CAMPUS
 
-## Getting Started
+A premium, 3D AI intelligence bulletin designed for the DBS Global University community (Dehradun, India).
+Next.js App Router · TypeScript · Tailwind CSS 4 · React Three Fiber · Motion · Lucide.
 
-First, run the development server:
+## Run locally
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev        # http://localhost:3000
+npm run lint
+npx tsc --noEmit
+npm run build && npm start
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Content and data
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Source | File | Status |
+| --- | --- | --- |
+| Weekly stories, editions, audio briefing | `src/data/sample/stories.ts`, `src/data/sample/campus.ts` | **Sample.** Illustrative only, labelled in the UI, no original URLs |
+| Campus listings | `src/data/sample/campus.ts` | **Example formats.** Not real university events |
+| Tools, research papers, India ecosystem | `src/data/reference.ts` | Real, public organisations and papers with official links. No prices or benchmarks |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+All pages read through `src/lib/api/index.ts`. With `NEXT_PUBLIC_API_BASE_URL` unset, the sample adapter is used.
+When it is set, the app calls the FastAPI service and shows error states on failure (never silently falls back to samples).
 
-## Learn More
+Expected endpoints (returning the types in `src/lib/types.ts`):
 
-To learn more about Next.js, take a look at the following resources:
+- `GET /api/v1/editions` → `Edition[]` (newest first)
+- `GET /api/v1/stories?edition=<id>` → `Story[]`
+- `GET /api/v1/stories/{slug}` → `Story` (404 when missing)
+- `GET /api/v1/briefings/latest` → `Briefing` (`audioUrl` enables the player)
+- `GET /api/v1/search?q=` → `Story[]` (semantic search; Qdrant-backed)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Never put API keys, database credentials or OAuth secrets in this frontend.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Brand assets
+
+- `public/brand/dbs-global-university-logo.png`: the supplied logo, byte-for-byte unchanged. Shown on a white plate so its purple artwork keeps contrast on dark surfaces.
+- `public/campus/dgu-ios-development-center.jpg`: cropped from the supplied iOS lab photo to remove the website's navigation overlay, slider arrows and caption. Not recoloured or stretched.
+- The supplied website screenshot was used as a palette and identity reference only.
 
 ## Deploy on Vercel
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Push this folder to a GitHub repository.
+2. In Vercel, **Add New → Project**, import the repository. Framework preset: Next.js (defaults are correct).
+3. Optionally add `NEXT_PUBLIC_API_BASE_URL` and `NEXT_PUBLIC_SITE_URL` under **Settings → Environment Variables**.
+4. Deploy. Story pages are statically generated from the sample data.

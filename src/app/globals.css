@@ -1,26 +1,159 @@
 @import "tailwindcss";
 
+/* ── DBS Global University working palette (sampled from supplied references) ── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --dbs-purple: #65176a;
+  --dbs-deep: #522b60;
+  --dbs-yellow: #ffde00;
+  --dbs-soft: #f7f5f8;
+  --dbs-white: #ffffff;
+  --dbs-ink: #211a23;
+
+  /* Derived tones: darker steps of deep purple for cinematic surfaces */
+  --night: #170a1b;
+  --night-2: #241029;
+  --ink-muted: #5c5061;
+  --line: rgb(33 26 35 / 0.12);
+  --line-dark: rgb(255 255 255 / 0.12);
+  --lilac: #d9c4e0;
+
+  --radius-lg: 28px;
+  --radius-md: 18px;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-purple: var(--dbs-purple);
+  --color-deep: var(--dbs-deep);
+  --color-yellow: var(--dbs-yellow);
+  --color-soft: var(--dbs-soft);
+  --color-ink: var(--dbs-ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-night: var(--night);
+  --color-night-2: var(--night-2);
+  --color-lilac: var(--lilac);
+  --color-line: var(--line);
+  --color-line-dark: var(--line-dark);
+
+  --font-sans: var(--font-body);
+  --font-display: var(--font-display);
+  --font-mono: var(--font-mono);
+
+  --ease-out-expo: var(--ease-out);
+  --breakpoint-xs: 26rem;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 5.5rem;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--dbs-soft);
+  color: var(--dbs-ink);
+  font-family: var(--font-body), system-ui, sans-serif;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: clip;
+}
+
+::selection {
+  background: var(--dbs-yellow);
+  color: var(--dbs-ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--dbs-yellow);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+.on-light :focus-visible,
+.on-light:focus-visible {
+  outline-color: var(--dbs-purple);
+}
+
+@layer components {
+  .shell {
+    width: 100%;
+    max-width: 1360px;
+    margin-inline: auto;
+    padding-inline: clamp(1rem, 4vw, 3rem);
+  }
+  .eyebrow {
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+  .display {
+    font-family: var(--font-display), var(--font-body), sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.035em;
+    line-height: 0.92;
+  }
+  .sample-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border: 1px dashed currentColor;
+    border-radius: 999px;
+    padding: 0.2rem 0.6rem;
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-size: 0.66rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .hairline-grid {
+    background-image:
+      linear-gradient(to right, var(--line) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--line) 1px, transparent 1px);
+    background-size: 72px 72px;
+  }
+  .hairline-grid-dark {
+    background-image:
+      linear-gradient(to right, rgb(255 255 255 / 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(255 255 255 / 0.05) 1px, transparent 1px);
+    background-size: 72px 72px;
+  }
+  .text-outline {
+    -webkit-text-fill-color: transparent;
+    -webkit-text-stroke: 1.5px currentColor;
+  }
+}
+
+@keyframes radar-sweep {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes scroll-cue {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(220%); }
+}
+@keyframes orb-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.04); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+@keyframes menu-in {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes dialog-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.98); }
+  to { opacity: 1; transform: none; }
 }
