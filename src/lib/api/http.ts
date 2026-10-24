@@ -1,3 +1,4 @@
+import type { Page } from "@/lib/types";
 import { API_BASE_URL } from "./config";
 
 export class ApiUnavailableError extends Error {}
@@ -20,3 +21,18 @@ export async function apiGet<T>(path: string, revalidateSeconds = 300): Promise<
 }
 
 export class NotFoundError extends Error {}
+
+const PAGE_SIZE = 100;
+const MAX_PAGES = 20;
+
+/** Follows the API's page/pageSize pagination and returns every item (bounded to MAX_PAGES pages). */
+export async function apiGetAll<T>(path: string, revalidateSeconds = 300): Promise<T[]> {
+  const separator = path.includes("?") ? "&" : "?";
+  const items: T[] = [];
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const data = await apiGet<Page<T>>(`${path}${separator}page=${page}&pageSize=${PAGE_SIZE}`, revalidateSeconds);
+    items.push(...data.items);
+    if (page >= data.totalPages) break;
+  }
+  return items;
+}

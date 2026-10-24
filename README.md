@@ -22,15 +22,20 @@ npm run build && npm start
 | Tools, research papers, India ecosystem | `src/data/reference.ts` | Real, public organisations and papers with official links. No prices or benchmarks |
 
 All pages read through `src/lib/api/index.ts`. With `NEXT_PUBLIC_API_BASE_URL` unset, the sample adapter is used.
-When it is set, the app calls the FastAPI service and shows error states on failure (never silently falls back to samples).
+When it is set, the app calls the FastAPI service in [`backend/`](backend/README.md) and shows error states on
+failure (never silently falls back to samples). Records the API marks `provenance: "sample"` keep their SAMPLE labels.
 
-Expected endpoints (returning the types in `src/lib/types.ts`):
+Endpoints used (paginated collections return `{items, page, pageSize, total, totalPages}`; items match `src/lib/types.ts`):
 
-- `GET /api/v1/editions` → `Edition[]` (newest first)
-- `GET /api/v1/stories?edition=<id>` → `Story[]`
+- `GET /api/v1/editions/current` → `Edition` + `stories` (featured first)
+- `GET /api/v1/editions` → `Page<Edition>` (newest first)
+- `GET /api/v1/stories?edition=<slug>` → `Page<Story>`
 - `GET /api/v1/stories/{slug}` → `Story` (404 when missing)
 - `GET /api/v1/briefings/latest` → `Briefing` (`audioUrl` enables the player)
-- `GET /api/v1/search?q=` → `Story[]` (semantic search; Qdrant-backed)
+- `GET /api/v1/search?q=` → `Page<Story>` (PostgreSQL keyword search; semantic search is planned)
+- `GET /api/v1/tools`, `/research`, `/india`, `/career-signals`, `/campus` → home-page sections
+
+See [`backend/README.md`](backend/README.md) for running the API, Supabase setup, migrations and seeding.
 
 Never put API keys, database credentials or OAuth secrets in this frontend.
 
