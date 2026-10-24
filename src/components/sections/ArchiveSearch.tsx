@@ -7,11 +7,11 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/ui/States";
 import { API_BASE_URL } from "@/lib/api/config";
 import { formatDate, topicLabels } from "@/lib/format";
 import { searchStories } from "@/lib/search";
-import type { LoadState, Story } from "@/lib/types";
+import type { LoadState, Page, Story } from "@/lib/types";
 
 const suggestions = ["open models", "agents", "Indian languages", "retrieval", "model card", "research papers"];
 
-/** Live semantic search when the API exists; otherwise keyword search over loaded stories. */
+/** Keyword search through the API when it is configured; otherwise local keyword search over loaded stories. */
 function useArchiveResults(query: string, stories: Story[]): LoadState<Story[]> {
   const [remote, setRemote] = useState<LoadState<Story[]>>({ status: "ready", data: [] });
   const local = useMemo(() => searchStories(stories, { query }), [stories, query]);
@@ -20,12 +20,12 @@ function useArchiveResults(query: string, stories: Story[]): LoadState<Story[]> 
     if (!API_BASE_URL || !query.trim()) return;
     const controller = new AbortController();
     setRemote({ status: "loading" });
-    fetch(`${API_BASE_URL}/api/v1/search?q=${encodeURIComponent(query)}`, { signal: controller.signal })
+    fetch(`${API_BASE_URL}/api/v1/search?q=${encodeURIComponent(query)}&pageSize=50`, { signal: controller.signal })
       .then((r) => {
         if (!r.ok) throw new Error(`Search responded with ${r.status}`);
-        return r.json() as Promise<Story[]>;
+        return r.json() as Promise<Page<Story>>;
       })
-      .then((data) => setRemote({ status: "ready", data }))
+      .then((data) => setRemote({ status: "ready", data: data.items }))
       .catch((err: unknown) => {
         if (!controller.signal.aborted) setRemote({ status: "error", message: err instanceof Error ? err.message : "Search failed" });
       });
@@ -85,7 +85,7 @@ export function ArchiveSearch({ stories }: { stories: Story[] }) {
           <p className="mt-6 inline-flex items-center gap-2 text-sm text-ink-muted">
             <Sparkles className="size-4 text-purple" aria-hidden />
             {API_BASE_URL
-              ? "Results come from the AI//CAMPUS search API."
+              ? "Keyword search through the AI//CAMPUS API. Semantic, AI-powered search is planned."
               : "Keyword search over the sample archive. Semantic, AI-powered search arrives with the backend."}
           </p>
         </div>

@@ -43,7 +43,7 @@ export interface Story {
   publishedAt: string; // ISO date
   readingMinutes: number;
   impact: StudentImpact;
-  image?: StoryImage;
+  image?: StoryImage | null;
   featured?: boolean;
 }
 
@@ -122,6 +122,15 @@ export interface Briefing {
   durationSeconds: number | null;
   transcript: string[];
   provenance: Provenance;
+}
+
+/** Envelope returned by every collection endpoint of the FastAPI service. */
+export interface Page<T> {
+  items: T[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
 }
 
 export type LoadState<T> =

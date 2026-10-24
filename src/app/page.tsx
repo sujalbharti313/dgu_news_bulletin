@@ -10,16 +10,30 @@ import { ToolRadar } from "@/components/sections/ToolRadar";
 import { WeeklyArchivePreview } from "@/components/sections/WeeklyArchivePreview";
 import { WeeklySignal } from "@/components/sections/WeeklySignal";
 import { ErrorState } from "@/components/ui/States";
-import { careerSignals, sampleCampusItems } from "@/data/sample/campus";
-import { indiaEcosystem, researchPapers, toolCategories, tools } from "@/data/reference";
-import { getCurrentEdition, getEditions, getLatestBriefing, getStories } from "@/lib/api";
+import { toolCategories } from "@/data/reference";
+import {
+  getCampusItems,
+  getCareerSignals,
+  getCurrentEdition,
+  getEditions,
+  getIndiaEcosystem,
+  getLatestBriefing,
+  getResearchPapers,
+  getStories,
+  getTools,
+} from "@/lib/api";
 
 export default async function HomePage() {
-  const [current, editions, allStories, briefing] = await Promise.all([
+  const [current, editions, allStories, briefing, tools, papers, india, careers, campus] = await Promise.all([
     getCurrentEdition(),
     getEditions(),
     getStories(),
     getLatestBriefing(),
+    getTools(),
+    getResearchPapers(),
+    getIndiaEcosystem(),
+    getCareerSignals(),
+    getCampusItems(),
   ]);
 
   return (
@@ -41,13 +55,13 @@ export default async function HomePage() {
         </div>
       )}
 
-      <ToolRadar tools={tools} categories={toolCategories} />
-      <ResearchRadar papers={researchPapers} />
-      <IndiaAISection entries={indiaEcosystem} />
-      <CareerSignal signals={careerSignals} />
+      {tools.ok && tools.data.length > 0 && <ToolRadar tools={tools.data} categories={toolCategories} />}
+      {papers.ok && papers.data.length > 0 && <ResearchRadar papers={papers.data} />}
+      {india.ok && india.data.length > 0 && <IndiaAISection entries={india.data} />}
+      {careers.ok && careers.data.length > 0 && <CareerSignal signals={careers.data} />}
       {briefing.ok && <AudioBriefing briefing={briefing.data} />}
       <ArchiveSearch stories={allStories.ok ? allStories.data : []} />
-      <CampusAI items={sampleCampusItems} />
+      {campus.ok && campus.data.length > 0 && <CampusAI items={campus.data} />}
       {editions.ok && allStories.ok && <WeeklyArchivePreview editions={editions.data} stories={allStories.data} />}
     </main>
   );

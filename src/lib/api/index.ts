@@ -1,8 +1,19 @@
-import { sampleBriefing } from "@/data/sample/campus";
+import { indiaEcosystem, researchPapers, tools } from "@/data/reference";
+import { careerSignals, sampleBriefing, sampleCampusItems } from "@/data/sample/campus";
 import { sampleEditions, sampleStories } from "@/data/sample/stories";
-import type { Briefing, Edition, Provenance, Story } from "@/lib/types";
+import type {
+  Briefing,
+  CampusItem,
+  CareerSignal,
+  Edition,
+  IndiaEntry,
+  Provenance,
+  ResearchPaper,
+  Story,
+  Tool,
+} from "@/lib/types";
 import { isLiveApiConfigured } from "./config";
-import { apiGet, NotFoundError } from "./http";
+import { apiGet, apiGetAll, NotFoundError } from "./http";
 
 /**
  * Single entry point for content. When NEXT_PUBLIC_API_BASE_URL is set, data
@@ -28,7 +39,7 @@ const byDateDesc = (a: Story, b: Story) => b.publishedAt.localeCompare(a.publish
 
 export function getEditions() {
   return load<Edition[]>(
-    () => apiGet<Edition[]>("/api/v1/editions"),
+    () => apiGetAll<Edition>("/api/v1/editions"),
     () => [...sampleEditions].sort((a, b) => b.weekOf.localeCompare(a.weekOf)),
   );
 }
@@ -36,13 +47,22 @@ export function getEditions() {
 export function getStories(editionId?: string) {
   const query = editionId ? `?edition=${encodeURIComponent(editionId)}` : "";
   return load<Story[]>(
-    () => apiGet<Story[]>(`/api/v1/stories${query}`),
+    () => apiGetAll<Story>(`/api/v1/stories${query}`),
     () => sampleStories.filter((s) => !editionId || s.editionId === editionId).sort(byDateDesc),
   );
 }
 
 /** Stories for the most recent edition, featured story first. */
 export async function getCurrentEdition(): Promise<DataResult<{ edition: Edition; stories: Story[] }>> {
+  if (isLiveApiConfigured) {
+    try {
+      const { stories, ...edition } = await apiGet<Edition & { stories: Story[] }>("/api/v1/editions/current");
+      return { ok: true, source: "live", data: { edition, stories } };
+    } catch (err) {
+      if (err instanceof NotFoundError) return { ok: false, error: "No editions have been published yet." };
+      return { ok: false, error: err instanceof Error ? err.message : "Unknown error" };
+    }
+  }
   const editions = await getEditions();
   if (!editions.ok) return editions;
   const edition = editions.data[0];
@@ -69,4 +89,26 @@ export async function getStory(slug: string): Promise<DataResult<Story | null>> 
 
 export function getLatestBriefing() {
   return load<Briefing>(() => apiGet<Briefing>("/api/v1/briefings/latest"), () => sampleBriefing);
+}
+
+/* Reference sections. Without the API these come from the static, source-linked files in src/data. */
+
+export function getTools() {
+  return load<Tool[]>(() => apiGetAll<Tool>("/api/v1/tools"), () => tools);
+}
+
+export function getResearchPapers() {
+  return load<ResearchPaper[]>(() => apiGetAll<ResearchPaper>("/api/v1/research?sort=oldest"), () => researchPapers);
+}
+
+export function getIndiaEcosystem() {
+  return load<IndiaEntry[]>(() => apiGetAll<IndiaEntry>("/api/v1/india"), () => indiaEcosystem);
+}
+
+export function getCareerSignals() {
+  return load<CareerSignal[]>(() => apiGetAll<CareerSignal>("/api/v1/career-signals"), () => careerSignals);
+}
+
+export function getCampusItems() {
+  return load<CampusItem[]>(() => apiGetAll<CampusItem>("/api/v1/campus"), () => sampleCampusItems);
 }

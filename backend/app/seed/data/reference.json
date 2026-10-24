@@ -1,0 +1,389 @@
+{
+  "tools": [
+    {
+      "id": "github-copilot",
+      "name": "GitHub Copilot",
+      "maker": "GitHub",
+      "category": "coding",
+      "summary": "AI pair programmer inside the editor: completions, chat and code explanations.",
+      "goodFor": [
+        "Boilerplate",
+        "Explaining unfamiliar code",
+        "Writing tests"
+      ],
+      "limitations": "Suggestions can be wrong or insecure. Review everything before you commit it.",
+      "access": "Free and paid plans. Students can check GitHub Education for academic access.",
+      "officialUrl": "https://github.com/features/copilot"
+    },
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "maker": "Anthropic",
+      "category": "coding",
+      "summary": "An agentic coding tool that works in your terminal and repository.",
+      "goodFor": [
+        "Multi-file changes",
+        "Understanding a codebase",
+        "Running and fixing tests"
+      ],
+      "limitations": "Needs a paid plan or API usage. Changes still need human review.",
+      "access": "See the official page for current plans.",
+      "officialUrl": "https://claude.com/product/claude-code"
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "maker": "Anysphere",
+      "category": "coding",
+      "summary": "A code editor built around AI chat, edits and codebase-aware context.",
+      "goodFor": [
+        "Refactors",
+        "Codebase Q&A",
+        "Rapid prototyping"
+      ],
+      "limitations": "Easy to accept large edits without understanding them.",
+      "access": "Free and paid tiers. Check the official site for limits.",
+      "officialUrl": "https://cursor.com"
+    },
+    {
+      "id": "mcp",
+      "name": "Model Context Protocol",
+      "maker": "Open specification",
+      "category": "agents",
+      "summary": "An open protocol for connecting AI applications to tools and data sources.",
+      "goodFor": [
+        "Giving agents tools",
+        "Reusable integrations",
+        "Learning agent architecture"
+      ],
+      "limitations": "Connecting tools to an agent expands what can go wrong. Scope permissions carefully.",
+      "access": "Open specification with open-source SDKs.",
+      "officialUrl": "https://modelcontextprotocol.io"
+    },
+    {
+      "id": "langgraph",
+      "name": "LangGraph",
+      "maker": "LangChain",
+      "category": "agents",
+      "summary": "A library for building stateful, multi-step agent workflows as graphs.",
+      "goodFor": [
+        "Agent loops with state",
+        "Human-in-the-loop steps",
+        "Tracing"
+      ],
+      "limitations": "Adds abstraction. Build a minimal loop yourself first to understand it.",
+      "access": "Open-source library.",
+      "officialUrl": "https://www.langchain.com/langgraph"
+    },
+    {
+      "id": "whisper",
+      "name": "Whisper",
+      "maker": "OpenAI",
+      "category": "media",
+      "summary": "Open-source speech recognition and translation model.",
+      "goodFor": [
+        "Transcribing lectures",
+        "Subtitles",
+        "Speech datasets"
+      ],
+      "limitations": "Accuracy varies by language and accent. Evaluate on your own audio.",
+      "access": "Open-source code and weights.",
+      "officialUrl": "https://github.com/openai/whisper"
+    },
+    {
+      "id": "stable-diffusion",
+      "name": "Stable Diffusion",
+      "maker": "Stability AI",
+      "category": "media",
+      "summary": "A family of image generation models, with openly available weights for some versions.",
+      "goodFor": [
+        "Learning diffusion models",
+        "Design exploration",
+        "Local image generation"
+      ],
+      "limitations": "Licences differ between versions. Check usage terms before publishing outputs.",
+      "access": "See the official site for each model’s licence.",
+      "officialUrl": "https://stability.ai"
+    },
+    {
+      "id": "colab",
+      "name": "Google Colab",
+      "maker": "Google",
+      "category": "research",
+      "summary": "Hosted Jupyter notebooks with optional GPU access.",
+      "goodFor": [
+        "Course notebooks",
+        "Small training runs",
+        "Sharing experiments"
+      ],
+      "limitations": "Free sessions have usage limits and can disconnect.",
+      "access": "Free and paid tiers.",
+      "officialUrl": "https://colab.research.google.com"
+    },
+    {
+      "id": "kaggle",
+      "name": "Kaggle",
+      "maker": "Google",
+      "category": "research",
+      "summary": "Datasets, notebooks and competitions for data science and machine learning.",
+      "goodFor": [
+        "Finding datasets",
+        "Practising on real problems",
+        "Learning from public notebooks"
+      ],
+      "limitations": "Competition setups differ from real-world deployment constraints.",
+      "access": "Free account.",
+      "officialUrl": "https://www.kaggle.com"
+    },
+    {
+      "id": "hugging-face",
+      "name": "Hugging Face Hub",
+      "maker": "Hugging Face",
+      "category": "open-models",
+      "summary": "A hub for open models, datasets and demo apps, with widely used libraries.",
+      "goodFor": [
+        "Finding open models",
+        "Reading model cards",
+        "Hosting demos"
+      ],
+      "limitations": "Model quality and licences vary widely. Read the card.",
+      "access": "Free account. Paid compute is optional.",
+      "officialUrl": "https://huggingface.co"
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama",
+      "maker": "Ollama",
+      "category": "open-models",
+      "summary": "Run open-weight language models locally with a simple command-line interface.",
+      "goodFor": [
+        "Offline prototyping",
+        "Private data",
+        "Comparing small models"
+      ],
+      "limitations": "Limited by your machine’s memory and speed.",
+      "access": "Free download.",
+      "officialUrl": "https://ollama.com"
+    },
+    {
+      "id": "llama-cpp",
+      "name": "llama.cpp",
+      "maker": "Open-source community",
+      "category": "open-models",
+      "summary": "Efficient C/C++ inference for language models, including quantised formats.",
+      "goodFor": [
+        "Understanding inference",
+        "Running on CPUs",
+        "Edge devices"
+      ],
+      "limitations": "Lower-level than hosted APIs. Expect some setup.",
+      "access": "Open-source.",
+      "officialUrl": "https://github.com/ggml-org/llama.cpp"
+    },
+    {
+      "id": "pytorch",
+      "name": "PyTorch",
+      "maker": "PyTorch Foundation",
+      "category": "infrastructure",
+      "summary": "The deep learning framework most research code is written in.",
+      "goodFor": [
+        "Training models",
+        "Reading research code",
+        "Custom architectures"
+      ],
+      "limitations": "You manage training loops, data and hardware yourself.",
+      "access": "Open-source.",
+      "officialUrl": "https://pytorch.org"
+    },
+    {
+      "id": "qdrant",
+      "name": "Qdrant",
+      "maker": "Qdrant",
+      "category": "infrastructure",
+      "summary": "An open-source vector database for semantic search and retrieval.",
+      "goodFor": [
+        "Retrieval-augmented generation",
+        "Similarity search",
+        "Recommendation"
+      ],
+      "limitations": "Retrieval quality depends on embeddings and chunking more than the database.",
+      "access": "Open-source, with a managed cloud option.",
+      "officialUrl": "https://qdrant.tech"
+    }
+  ],
+  "researchPapers": [
+    {
+      "id": "attention",
+      "title": "Attention Is All You Need",
+      "authors": "Vaswani et al.",
+      "organisation": "Google Brain, Google Research, University of Toronto",
+      "published": "2017-06-12",
+      "plainLanguage": "Introduced the Transformer, an architecture that processes sequences using attention instead of recurrence.",
+      "demonstrated": "Strong machine-translation results with training that parallelises far better than earlier recurrent models.",
+      "limitations": "Attention cost grows quadratically with sequence length, which later work has tried to reduce.",
+      "url": "https://arxiv.org/abs/1706.03762"
+    },
+    {
+      "id": "rag",
+      "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "authors": "Lewis et al.",
+      "organisation": "Facebook AI Research, University College London, New York University",
+      "published": "2020-05-22",
+      "plainLanguage": "Combines a text generator with a retriever that fetches relevant documents at answer time.",
+      "demonstrated": "Improved results on open-domain question answering compared with models relying only on their parameters.",
+      "limitations": "Answers are only as good as what is retrieved. Retrieval errors pass straight through.",
+      "url": "https://arxiv.org/abs/2005.11401"
+    },
+    {
+      "id": "gpt3",
+      "title": "Language Models are Few-Shot Learners",
+      "authors": "Brown et al.",
+      "organisation": "OpenAI",
+      "published": "2020-05-28",
+      "plainLanguage": "Showed that a very large language model can perform many tasks from a few examples in the prompt.",
+      "demonstrated": "Few-shot performance on a wide range of benchmarks improved with model scale.",
+      "limitations": "The authors document weaknesses including factual errors, bias and data contamination concerns.",
+      "url": "https://arxiv.org/abs/2005.14165"
+    },
+    {
+      "id": "ddpm",
+      "title": "Denoising Diffusion Probabilistic Models",
+      "authors": "Ho, Jain, Abbeel",
+      "organisation": "UC Berkeley",
+      "published": "2020-06-19",
+      "plainLanguage": "Generates images by learning to reverse a gradual noising process, step by step.",
+      "demonstrated": "High-quality image samples on standard datasets, helping start the diffusion model wave.",
+      "limitations": "Sampling required many steps and was slow; later methods reduced this.",
+      "url": "https://arxiv.org/abs/2006.11239"
+    },
+    {
+      "id": "lora",
+      "title": "LoRA: Low-Rank Adaptation of Large Language Models",
+      "authors": "Hu et al.",
+      "organisation": "Microsoft",
+      "published": "2021-06-17",
+      "plainLanguage": "Fine-tunes a large model by training small add-on matrices instead of all of its weights.",
+      "demonstrated": "Comparable quality to full fine-tuning on the tested tasks with far fewer trainable parameters.",
+      "limitations": "Results are task-dependent; it does not remove the need for good data.",
+      "url": "https://arxiv.org/abs/2106.09685"
+    },
+    {
+      "id": "cot",
+      "title": "Chain-of-Thought Prompting Elicits Reasoning in Large Language Models",
+      "authors": "Wei et al.",
+      "organisation": "Google Research, Brain Team",
+      "published": "2022-01-28",
+      "plainLanguage": "Prompting a model with worked, step-by-step examples improves its multi-step reasoning.",
+      "demonstrated": "Gains on arithmetic, commonsense and symbolic reasoning benchmarks for sufficiently large models.",
+      "limitations": "Benefits appeared mainly at large scale, and written reasoning steps are not guaranteed to be faithful.",
+      "url": "https://arxiv.org/abs/2201.11903"
+    }
+  ],
+  "indiaEcosystem": [
+    {
+      "id": "indiaai",
+      "name": "IndiaAI Mission",
+      "kind": "Government programme",
+      "focus": "Compute, datasets, skilling",
+      "description": "The national AI programme under the Ministry of Electronics and Information Technology.",
+      "url": "https://indiaai.gov.in"
+    },
+    {
+      "id": "bhashini",
+      "name": "BHASHINI",
+      "kind": "Public platform",
+      "focus": "Indian-language translation and speech",
+      "description": "The platform of the National Language Translation Mission, offering language AI services and APIs.",
+      "url": "https://bhashini.gov.in"
+    },
+    {
+      "id": "ai4bharat",
+      "name": "AI4Bharat",
+      "kind": "Research lab",
+      "focus": "Open-source Indian-language AI",
+      "description": "A research initiative at IIT Madras releasing open datasets and models for Indian languages.",
+      "url": "https://ai4bharat.iitm.ac.in"
+    },
+    {
+      "id": "sarvam",
+      "name": "Sarvam AI",
+      "kind": "Startup",
+      "focus": "Indian-language models and voice",
+      "description": "A Bengaluru-based company building language and speech models for Indian languages.",
+      "url": "https://www.sarvam.ai"
+    },
+    {
+      "id": "wadhwani",
+      "name": "Wadhwani AI",
+      "kind": "Research lab",
+      "focus": "AI for public health and agriculture",
+      "description": "A non-profit institute applying AI to problems in public health, agriculture and education.",
+      "url": "https://www.wadhwaniai.org"
+    }
+  ],
+  "careerSignals": [
+    {
+      "id": "skill-evals",
+      "kind": "skill",
+      "title": "Evaluating models on your own task",
+      "description": "Building a small, honest test set and measuring a model against it is useful in almost any AI role.",
+      "startWith": "Write 30 real examples from your project and score two models on them.",
+      "relatedTopics": [
+        "models",
+        "research"
+      ]
+    },
+    {
+      "id": "skill-retrieval",
+      "kind": "skill",
+      "title": "Retrieval and embeddings",
+      "description": "Most applied LLM products search over documents. Understanding chunking and vector search is foundational.",
+      "startWith": "Index your course PDFs and compare keyword search with embedding search.",
+      "relatedTopics": [
+        "tools"
+      ]
+    },
+    {
+      "id": "project-local-language",
+      "kind": "project",
+      "title": "A tool for a local language",
+      "description": "Underserved languages are a place where a student project can be genuinely useful.",
+      "startWith": "Pick one task (transcription, translation, search) and one language you speak.",
+      "relatedTopics": [
+        "india"
+      ]
+    },
+    {
+      "id": "project-agent-audit",
+      "kind": "project",
+      "title": "An agent with an audit log",
+      "description": "Agents that explain every action are easier to trust and debug.",
+      "startWith": "Build a minimal tool-calling loop that writes each step to a readable log.",
+      "relatedTopics": [
+        "tools"
+      ]
+    },
+    {
+      "id": "oss-docs",
+      "kind": "open-source",
+      "title": "Documentation contributions",
+      "description": "Improving docs and examples in open-source AI libraries is a respected first contribution.",
+      "startWith": "Find an issue labelled “documentation” or “good first issue” in a library you already use.",
+      "relatedTopics": [
+        "tools",
+        "models"
+      ]
+    },
+    {
+      "id": "oss-datasets",
+      "kind": "open-source",
+      "title": "Dataset cards and cleaning",
+      "description": "Clear dataset documentation helps everyone. It also teaches you how data shapes models.",
+      "startWith": "Read three dataset cards on the Hugging Face Hub and note what is missing.",
+      "relatedTopics": [
+        "research",
+        "india"
+      ]
+    }
+  ]
+}
