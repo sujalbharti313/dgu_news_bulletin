@@ -56,7 +56,8 @@ export function getStories(editionId?: string) {
 export async function getCurrentEdition(): Promise<DataResult<{ edition: Edition; stories: Story[] }>> {
   if (isLiveApiConfigured) {
     try {
-      const { stories, ...edition } = await apiGet<Edition & { stories: Story[] }>("/api/v1/editions/current");
+      const { stories: rawStories, ...edition } = await apiGet<Edition & { stories: Story[] }>("/api/v1/editions/current");
+      const stories = [...rawStories].sort((a, b) => Number(!!b.featured) - Number(!!a.featured));
       return { ok: true, source: "live", data: { edition, stories } };
     } catch (err) {
       if (err instanceof NotFoundError) return { ok: false, error: "No editions have been published yet." };
