@@ -20,10 +20,10 @@ def test_current_edition_uses_latest_public_week_and_orders_stories(client, db_s
     f.edition(db_session, week_start=date(2030, 4, 1))
     current = f.edition(db_session, week_start=date(2030, 4, 8), slug="2030-w15")
     f.edition(db_session, week_start=date(2030, 4, 15), status="draft", published_at=None)
-    second = f.story(
+    newer = f.story(
         db_session, edition=current, source=src, edition_position=2, published_at=f.now() - timedelta(hours=1)
     )
-    first = f.story(
+    older = f.story(
         db_session, edition=current, source=src, edition_position=1, published_at=f.now() - timedelta(hours=5)
     )
     featured = f.story(
@@ -35,7 +35,7 @@ def test_current_edition_uses_latest_public_week_and_orders_stories(client, db_s
     assert res.status_code == 200
     body = res.json()
     assert body["id"] == "2030-w15"
-    assert [s["slug"] for s in body["stories"]] == [featured.slug, first.slug, second.slug]
+    assert [s["slug"] for s in body["stories"]] == [featured.slug, newer.slug, older.slug]
 
 
 def test_current_edition_404_when_nothing_published(client, db_session):

@@ -46,7 +46,13 @@ def test_demo_content_is_hidden_from_the_public_api_by_default(client, demo_clie
     assert client.get("/api/v1/tools").json()["total"] == 14  # reference data is real and public
     current = demo_client.get("/api/v1/editions/current").json()
     assert current["id"] == "2026-w43" and current["provenance"] == "sample"
-    assert current["stories"][0]["slug"] == "small-open-models-on-a-laptop"  # featured first
+    # Same order the sample adapter renders: featured first, then newest.
+    assert [st["slug"] for st in current["stories"]] == [
+        "small-open-models-on-a-laptop",
+        "reading-a-model-card",
+        "indian-language-speech-datasets",
+        "agents-that-use-a-browser",
+    ]
 
 
 @pytest.mark.parametrize(

@@ -76,14 +76,14 @@ class StoryRepository:
         return list(rows), total
 
     def for_edition(self, edition_id: uuid.UUID) -> list[Story]:
-        """Every public story of one edition: featured first, then editorial position, then newest."""
+        """Every public story of one edition: featured first, then newest, matching the frontend's sample adapter."""
         stmt = (
             self._base()
             .where(Story.edition_id == edition_id)
             .order_by(
                 Story.is_featured.desc(),
-                Story.edition_position.asc().nulls_last(),
                 Story.published_at.desc(),
+                Story.edition_position.asc().nulls_last(),
                 Story.id,
             )
         )
