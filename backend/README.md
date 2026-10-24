@@ -182,7 +182,7 @@ Base path `/api/v1`. JSON is camelCase. Only `GET` exists; other methods return 
 | `GET /stories/{id or slug}` | `Story` | 404 if not public |
 | `GET /search?q=` | `Page<Story>` + `query`, `mode: "keyword"` | `topic`, `edition`. Ranked full-text keyword search |
 | `GET /editions` | `Page<Edition>` | Newest week first |
-| `GET /editions/current` | `Edition` + `stories[]` | Latest public week; featured story first, then `edition_position`. 404 if none |
+| `GET /editions/current` | `Edition` + `stories[]` | Latest public week; featured story first, then newest (`edition_position` breaks ties). 404 if none |
 | `GET /editions/{slug}` | `Edition` + `stories[]` | 404 if not public |
 | `GET /briefings/latest` | `Briefing` | `audioUrl` and `durationSeconds` stay null until real audio exists. 404 if none |
 | `GET /tools` | `Page<Tool>` | `category`, `q` (name, maker, summary) |
