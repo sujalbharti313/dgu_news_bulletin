@@ -1,0 +1,79 @@
+# AI//CAMPUS ingestion sources (Phase 3.1).
+#
+# Every entry is validated at load time (`python -m scripts.ingest check`): unknown fields, duplicate
+# keys or feed URLs, non-HTTPS URLs and internal hosts are rejected. Changes go through code review.
+#
+# Common fields
+#   key        unique, lower-case-with-dashes; recorded on every staged item and job (do not rename lightly)
+#   type       "rss" (RSS or Atom) or "gmail"
+#   name       human-readable name
+#   category   official | research | government | news | newsletter
+#   enabled    false keeps the entry but never fetches it
+#   publisher  attribution; leave it out to use the feed's own title. Never guess.
+#   max_items  per-run cap (also bounded by INGESTION_MAX_ITEMS_PER_SOURCE)
+#   notes      free text for maintainers
+#
+# Before enabling a new feed, check it: python -m scripts.ingest run --dry-run --source <key>
+#
+# Verification status (2026-11-04): these URLs are the publishers' documented feed locations, but the
+# build environment could not reach them, so none were fetched live. Run the dry run above once.
+
+[[sources]]
+key = "arxiv-cs-ai"
+type = "rss"
+name = "arXiv: Artificial Intelligence (cs.AI) new submissions"
+category = "research"
+publisher = "arXiv"
+url = "https://rss.arxiv.org/rss/cs.AI"
+max_items = 50
+notes = "Daily listing of new cs.AI preprints. Preprints are not peer reviewed."
+
+[[sources]]
+key = "openai-news"
+type = "rss"
+name = "OpenAI News"
+category = "official"
+publisher = "OpenAI"
+url = "https://openai.com/news/rss.xml"
+
+[[sources]]
+key = "huggingface-blog"
+type = "rss"
+name = "Hugging Face Blog"
+category = "official"
+publisher = "Hugging Face"
+url = "https://huggingface.co/blog/feed.xml"
+
+[[sources]]
+key = "google-research-blog"
+type = "rss"
+name = "Google Research Blog"
+category = "research"
+publisher = "Google Research"
+url = "https://research.google/blog/rss/"
+enabled = false
+notes = "Enable after a successful dry run."
+
+# Indian AI research and government sources: add verified feeds here, for example
+#
+# [[sources]]
+# key = "example-india-gov-ai"
+# type = "rss"
+# name = "..."
+# category = "government"
+# publisher = "..."
+# url = "https://..."
+# enabled = false
+
+[[sources]]
+key = "tldr-ai"
+type = "gmail"
+name = "TLDR AI"
+category = "newsletter"
+# Gmail search syntax. Keep it narrow; allowed_senders is checked again on every message.
+query = 'from:dan@tldrnewsletter.com subject:"TLDR AI"'
+allowed_senders = ["dan@tldrnewsletter.com"]
+parser = "tldr"
+max_messages = 10
+initial_lookback_days = 7
+notes = "Skipped automatically until GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET and GMAIL_REFRESH_TOKEN are set. Confirm the sender address against a real issue in the mailbox."

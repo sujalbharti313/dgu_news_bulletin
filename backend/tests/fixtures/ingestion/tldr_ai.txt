@@ -1,0 +1,21 @@
+TLDR AI 2026-11-03
+
+HEADLINES & LAUNCHES
+
+EXAMPLE LAB RELEASES A TEST MODEL (4 MINUTE READ) [1]
+
+Example Lab announced a fictional model for this test.
+
+TRY OUR GPU CLOUD (SPONSOR) [2]
+
+Sponsored text.
+
+TEST-AGENT (GITHUB REPO) [3]
+
+An open-source agent framework that exists only in this fixture.
+
+Links:
+------
+[1] https://tracking.tldrnewsletter.com/CL0/https:%2F%2Fnews.example.com%2F2026%2F11%2Fmodel-launch/1/aa
+[2] https://tracking.tldrnewsletter.com/CL0/https:%2F%2Fsponsor.example.com%2Foffer/1/aa
+[3] https://github.com/example-org/test-agent
