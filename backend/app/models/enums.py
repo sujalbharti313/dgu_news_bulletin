@@ -87,7 +87,7 @@ class CampusItemKind(StrEnum):
 
 
 class IngestionJobType(StrEnum):
-    """Reserved for Phase 3. No job runner exists yet."""
+    """SOURCE_FETCH (RSS/Atom) and NEWSLETTER_IMPORT (Gmail) are used by Phase 3.1; the rest are reserved."""
 
     SOURCE_FETCH = "source_fetch"
     NEWSLETTER_IMPORT = "newsletter_import"
@@ -101,3 +101,20 @@ class IngestionJobStatus(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    # The source was deliberately not collected (disabled, not configured, or already running elsewhere).
+    SKIPPED = "skipped"
+
+
+class IngestionSourceType(StrEnum):
+    RSS = "rss"
+    GMAIL = "gmail"
+
+
+class IngestionItemStatus(StrEnum):
+    """Hand-off state of a staged item. Stage 3.1 only ever writes PENDING; later stages move it on."""
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    PROCESSED = "processed"
+    DISCARDED = "discarded"
+    FAILED = "failed"

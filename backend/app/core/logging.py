@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 
 
 class JsonFormatter(logging.Formatter):
-    _extra_keys = ("request_id", "method", "path", "status", "duration_ms")
+    _extra_keys = ("request_id", "method", "path", "status", "duration_ms", "source_key", "outcome", "counts")
 
     def format(self, record: logging.LogRecord) -> str:
         payload = {
@@ -34,5 +34,8 @@ def configure_logging(level: str = "INFO", as_json: bool = False) -> None:
     root.setLevel(level)
     # SQL echo would log query parameters; keep SQLAlchemy quiet unless debugging deliberately.
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    # httpx logs every request URL at INFO (query strings included); ingestion logs host-only lines instead.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     # Our middleware writes access lines with a request id instead.
     logging.getLogger("uvicorn.access").disabled = True

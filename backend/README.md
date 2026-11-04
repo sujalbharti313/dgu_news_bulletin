@@ -1,14 +1,15 @@
-# AI//CAMPUS backend (Phase 2)
+# AI//CAMPUS backend (Phases 2 and 3.1)
 
-A public, read-only REST API for the AI//CAMPUS bulletin, backed by Supabase PostgreSQL.
-FastAPI · Pydantic v2 · SQLAlchemy 2 · psycopg 3 · Alembic · pytest.
+A public, read-only REST API for the AI//CAMPUS bulletin, backed by Supabase PostgreSQL, plus (Phase 3.1)
+automated news ingestion from RSS/Atom feeds and the TLDR AI newsletter via Gmail. See [News ingestion](#news-ingestion-phase-31).
+FastAPI · Pydantic v2 · SQLAlchemy 2 · psycopg 3 · Alembic · httpx · feedparser · pytest.
 
 The backend is independent of the Next.js frontend: it lives in `backend/`, has its own dependencies,
 and deploys to any Python host. The frontend talks to it only through `NEXT_PUBLIC_API_BASE_URL`.
 
-> **Status of the live database:** the schema, migrations and seed have been run and tested against a
-> local PostgreSQL 16. They have **not** been run against a Supabase project yet, because no Supabase
-> credentials were available. Follow [Supabase setup](#supabase-setup) to do that.
+> **Status of the live database:** the Supabase project has migration `0001` and the reference data.
+> Migration `0002` (Phase 3.1 ingestion tables) has been tested against a local PostgreSQL 16 only; apply it
+> with `alembic upgrade head` before running ingestion against Supabase.
 
 ---
 
@@ -30,10 +31,12 @@ backend/
 │   ├── repositories/         Queries. visibility.py holds every publication rule in one place
 │   ├── services/             Use cases, row→contract presenters, URL canonicalisation
 │   ├── middleware/           Request id + access log + security headers; per-IP rate limiting
-│   ├── api/v1/               Versioned router and endpoint modules
+│   ├── api/v1/               Versioned router and endpoint modules (admin_ingestion.py: token-protected)
+│   ├── ingestion/            Phase 3.1: sources, SSRF guard, HTTP client, providers, parsers, store, runner
 │   └── seed/                 Seed runner + JSON fixtures exported from the frontend's data files
+├── config/                   ingestion_sources.toml (the feeds and newsletters to collect)
 ├── migrations/               Alembic environment and versioned migrations
-├── scripts/                  seed.py CLI, export_frontend_fixtures.mjs
+├── scripts/                  seed.py, ingest.py, gmail_oauth.py CLIs, export_frontend_fixtures.mjs
 ├── tests/                    pytest suite (API, constraints, migrations, contract, seed, config)
 ├── alembic.ini · pyproject.toml · requirements*.txt · Dockerfile · .env.example
 ```
@@ -80,6 +83,7 @@ All settings are read from the environment or `backend/.env` (run commands from 
 | `LOG_LEVEL` / `LOG_JSON` | `INFO` / `false` | Logging. |
 | `DOCS_ENABLED` | `true` | Serve `/docs`, `/redoc`, `/openapi.json`. |
 | `TEST_DATABASE_URL` | unset | Tests only. Must be a local database whose name contains `test`. |
+| `INGESTION_*`, `GMAIL_*` | see below | Phase 3.1 ingestion. See [Ingestion settings](#ingestion-settings). |
 
 Never put any of these in the frontend. The only frontend variable is `NEXT_PUBLIC_API_BASE_URL`.
 
@@ -129,6 +133,8 @@ alembic upgrade head --sql        # print the SQL without running it (review bef
 
 Initial schema (`0001`): `sources`, `editions`, `stories`, `audio_briefings`, `tools`, `research_papers`,
 `india_entries`, `career_signals`, `campus_items`, `ingestion_jobs`, plus an `updated_at` trigger on each.
+Ingestion (`0002`, additive): the temporary `ingestion_items` staging table, and `source_key`, `details`, a
+`skipped` status and a one-running-job-per-source index on `ingestion_jobs`. See [Database changes](#database-changes-migration-0002).
 
 ## Seeding
 
@@ -242,7 +248,8 @@ filters are simple case-insensitive substring matches with LIKE wildcards escape
 | `tools` | `slug`, `provider`, `category`, `good_for[]`, `limitations`, `access_notes`, `official_url`, `pricing_notes` (requires `last_verified_at`), `source_id`, `status`, `display_order` |
 | `research_papers` | `slug`, `title`, `authors`, `organisation`, `published_on`, unique `url` and `doi`, `key_findings`, `limitations`, `plain_language_summary` + `summary_origin` (editorial / ai_assisted), `topic`, `status` |
 | `india_entries`, `career_signals`, `campus_items` | Small editorial collections with `slug`, `status`, `display_order`; `career_signals.related_topics[]` is checked against the topic list; `campus_items.is_demo` |
-| `ingestion_jobs` | Phase 3 bookkeeping: `job_type`, `status`, `attempt_count ≥ 0`, `started_at` ≤ `completed_at`, `error_summary` ≤ 2000 chars. No public endpoint. Never stores credentials or raw newsletter bodies |
+| `ingestion_jobs` | One row per source per ingestion run: `source_key`, `job_type`, `status` (queued, running, succeeded, failed, cancelled, skipped), `attempt_count ≥ 0`, `started_at` ≤ `completed_at`, `error_summary` ≤ 2000 chars, `details` (counts + incremental cursor). At most one `running` row per source. No public endpoint. Never stores credentials or raw newsletter bodies |
+| `ingestion_items` | **Temporary** hand-off queue for the next stage: `source_key`, `source_type` (rss, gmail), `title`, `original_url`, `canonical_url`, unique `dedup_key` (sha256 of the canonical URL), `publisher`, `published_at`, `excerpt` ≤ 2000, `feed_identifier`, `collected_at`, `processing_status`, `expires_at`, `extra`. Deleted automatically after `expires_at` |
 
 All primary keys are UUIDs (`gen_random_uuid()`), all timestamps are `timestamptz` in UTC, and every table has
 `created_at`/`updated_at` (maintained by a trigger). Vocabularies are text columns with CHECK constraints
@@ -256,11 +263,12 @@ remaining query sorted). Ingestion must store the result in `stories.canonical_u
 
 ## Security model
 
-- **No write API.** Phase 2 exposes only public `GET` endpoints. There are no admin, publish, create,
-  update or delete routes, so there is nothing for an anonymous client to abuse and no authentication
-  to get wrong. Content is written by the seed CLI, migrations, or (Phase 3) server-side jobs, all using
-  server-only credentials. Editorial review UI and Supabase Auth with verified role claims belong to the
-  phase that adds write operations.
+- **No public write API.** Public endpoints are `GET` only. There are no publish, create, update or delete
+  routes. The only non-GET route is the admin ingestion trigger (Phase 3.1), which does not exist unless
+  `INGESTION_ADMIN_TOKEN` is set, requires that bearer token, accepts only configured source keys, and
+  only stages items for later review. Content is written by the seed CLI, migrations, or server-side
+  jobs, all using server-only credentials. Editorial review UI and Supabase Auth with verified role claims
+  belong to the phase that adds publishing.
 - Secrets come only from the environment; `DATABASE_URL` is a `SecretStr`, rejected URLs are not echoed,
   and logs show `host:port/db` only.
 - CORS: explicit origins, `GET` only, no credentials. Wildcards fail at startup.
@@ -277,7 +285,8 @@ remaining query sorted). Ingestion must store the result in `stories.canonical_u
 ```bash
 createdb aicampus_test                      # any local PostgreSQL 14+
 export TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/aicampus_test
-pytest                                       # API, constraints, migrations, seed, contract, config
+pytest                                       # API, constraints, migrations, seed, contract, config, ingestion
+pytest tests/test_ingestion_*.py             # ingestion only
 ruff check . && ruff format --check .
 ```
 
@@ -289,7 +298,234 @@ ruff check . && ruff format --check .
   CORS, rate limiting, error handling, config rules, URL canonicalisation) still run.
 - `tests/test_contract.py` parses `src/lib/types.ts` and checks every endpoint's JSON has all required
   fields of the matching TypeScript interface, and that seeded API content equals the frontend sample files.
-- Nothing in the suite talks to Supabase.
+- Nothing in the suite talks to Supabase, Google or any feed: ingestion tests use `httpx.MockTransport`, a
+  fake DNS resolver, a fake Gmail API/token endpoint and synthetic fixtures in `tests/fixtures/ingestion/`.
+
+## News ingestion (Phase 3.1)
+
+Collects candidate AI news from configured RSS/Atom feeds and from the TLDR AI newsletter in Gmail,
+normalises it, removes duplicates and stages it in `ingestion_items` for the next stage (summarisation,
+review). **It never publishes anything** and never changes stories, editions or sources.
+
+### Architecture
+
+```
+config/ingestion_sources.toml ──► sources.py (validate) ──► runner.py ── for each source, isolated ──┐
+                                                                                                     │
+   providers/rss.py   ── http.py (SSRF-safe, retries) ── feedparser ──────────────┐                   │
+   providers/gmail.py ── http.py ── Gmail REST API ── parsers/tldr.py ────────────┤                   │
+                                                                                  ▼                   │
+                                   normalize.py (clean, validate URL, canonicalise, dedup key)        │
+                                                                                  ▼                   │
+                                   store.py ── ingestion_items (pending, expires) + ingestion_jobs ◄──┘
+```
+
+| Module | Responsibility |
+| --- | --- |
+| `app/ingestion/sources.py` | Typed source config (Pydantic), strict validation, unique keys and URLs |
+| `app/ingestion/url_safety.py` | URL and IP validation (SSRF guard) |
+| `app/ingestion/http.py` | The only network client: timeouts, size cap, retries with backoff, redirect re-validation |
+| `app/ingestion/providers/rss.py` | Conditional GET, feedparser on bytes, entry extraction, incremental cursor |
+| `app/ingestion/providers/gmail.py` | OAuth refresh, message listing with pagination, sender allow-list, cursor |
+| `app/ingestion/parsers/tldr.py` | TLDR email HTML/text → article title, destination URL, blurb |
+| `app/ingestion/normalize.py` | `RawItem` → `NormalizedItem`: text cleaning, URL checks, canonical URL, dates |
+| `app/ingestion/store.py` | Postgres store (and an in-memory one for dry runs/tests): staging, dedup, jobs, retention |
+| `app/ingestion/runner.py` | Orchestration, per-source outcome (succeeded/skipped/failed), structured logs |
+| `app/api/v1/endpoints/admin_ingestion.py` | Token-protected trigger and status endpoints |
+| `scripts/ingest.py`, `scripts/gmail_oauth.py` | CLIs |
+
+Each normalised item carries: `source_key`, `source_type`, `title`, `original_url` (as published),
+`canonical_url`, `publisher`, `published_at`, `excerpt`, `feed_identifier` (feed URL or `gmail:<message id>`),
+`collected_at`, `processing_status` (`pending`) and small `extra` metadata (author, categories, read time,
+newsletter date). Values that a source does not provide stay empty: a newsletter item has no `publisher` or
+`published_at`, because TLDR does not state them (the email's date is kept as `extra.newsletter_date`).
+
+### Storage policy
+
+AI//CAMPUS does not archive raw news. Ingestion keeps only what the next stage needs, briefly:
+
+| What | Why | How long | How it is deleted |
+| --- | --- | --- | --- |
+| `ingestion_items`: title, both URLs, publisher, date, excerpt (≤ 600 chars), small metadata. Never full articles or email bodies | A durable hand-off so a crash between stages loses nothing, and so duplicates are recognised across runs and sources | `INGESTION_ITEM_RETENTION_DAYS` (default 14) via `expires_at` | Every run starts by deleting rows whose `expires_at` has passed; `python -m scripts.ingest purge` does the same |
+| `ingestion_jobs`: per-source outcome, counts, cursor (ETag, newest date, processed Gmail ids). No content | Source-level failure tracking and incremental fetching | `INGESTION_JOB_RETENTION_DAYS` (default 90); each source's latest success is kept as its cursor | Same purge step |
+
+Email bodies are parsed in memory and discarded. Gmail tokens live only in environment variables and in
+memory. Published content (`stories`, `editions`, `sources`) is read only, to skip articles whose canonical
+URL is already in the bulletin.
+
+### Database changes (migration 0002)
+
+Additive only; no existing row changes. Apply with `alembic upgrade head` (the live Supabase database is
+at `0001`).
+
+- New table `ingestion_items` (above), RLS enabled with no policies like every other table, `updated_at` trigger.
+- `ingestion_jobs.source_key` (which configured source), `ingestion_jobs.details` (JSONB counts + cursor),
+  `skipped` added to the status values, and a partial unique index allowing one `running` job per source.
+
+Why not fewer: the staging table is the hand-off to Stage 3.2 and the cross-run dedup record; the job columns
+reuse the existing table for failure tracking and cursors instead of adding a state table. The unique index
+is what makes concurrent runs (two schedulers, or the CLI and the admin endpoint) safe, and it works through
+Supabase's transaction pooler, unlike session advisory locks.
+
+### Ingestion settings
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `INGESTION_SOURCES_FILE` | `config/ingestion_sources.toml` | Source configuration (relative to `backend/`) |
+| `INGESTION_ADMIN_TOKEN` | unset | Enables the admin endpoints. ≥ 32 characters. Unset = endpoints return 404 |
+| `INGESTION_ITEM_RETENTION_DAYS` | `14` | Lifetime of staged items (1–90) |
+| `INGESTION_JOB_RETENTION_DAYS` | `90` | Lifetime of job rows (7–730) |
+| `INGESTION_JOB_STALE_MINUTES` | `60` | A `running` job older than this is marked failed (crash recovery) |
+| `INGESTION_SCHEDULE_MINUTES` | `360` | Interval for `scripts.ingest schedule` (15–10 080) |
+| `INGESTION_HTTP_TIMEOUT_SECONDS` | `15` | Connect (≤ 10 s) and read timeout; whole download ≤ 2× this |
+| `INGESTION_MAX_RESPONSE_BYTES` | `5000000` | Response size cap (decompressed) |
+| `INGESTION_MAX_RETRIES` | `3` | Retries on timeouts, connection errors, 429 and 5xx (backoff 1 s, 2 s, 4 s … ≤ 30 s, jittered, honours `Retry-After`) |
+| `INGESTION_MAX_ITEMS_PER_SOURCE` | `100` | Per-run cap per source |
+| `INGESTION_USER_AGENT` | `AI-CAMPUS-Ingestion/0.3` | Sent with every fetch |
+| `INGESTION_HTTP_TRUST_ENV` | `false` | Use `HTTP(S)_PROXY` from the environment |
+| `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` / `GMAIL_REFRESH_TOKEN` | unset | Gmail OAuth. All three, or Gmail sources are skipped |
+
+Placeholders for all of them are in `.env.example`. None of them may be given a `NEXT_PUBLIC_` prefix or put in
+the frontend.
+
+### Configuring RSS and official sources
+
+Sources live in `config/ingestion_sources.toml`, so adding one is a reviewed pull request, not an API call:
+
+```toml
+[[sources]]
+key = "example-lab-blog"          # unique, lower-case-with-dashes; stored on every item and job
+type = "rss"                      # RSS 0.9x/1.0/2.0 or Atom
+name = "Example Lab Blog"
+category = "official"             # official | research | government | news | newsletter
+publisher = "Example Lab"         # optional; otherwise the feed's own title. Never guess
+url = "https://lab.example.com/feed.xml"   # https only (allow_http = true to opt in per source)
+enabled = true
+max_items = 50                    # optional per-run cap
+```
+
+`python -m scripts.ingest check` validates the file (unknown fields, duplicate keys or URLs, non-HTTPS URLs
+and internal hosts are errors). Before enabling a new feed, run `python -m scripts.ingest run --dry-run --source <key>`.
+
+The shipped file contains arXiv cs.AI, OpenAI News and the Hugging Face blog (enabled), the Google Research
+blog (disabled until checked) and the TLDR AI newsletter, plus a commented template for Indian government
+and research sources. **These URLs could not be fetched from the environment this was built in**; run the
+dry run once to confirm each before relying on it, and add Indian sources only after verifying their feeds.
+
+### Configuring Gmail (TLDR AI) with OAuth 2.0
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create (or pick) a project and enable the
+   **Gmail API** (APIs & Services → Library).
+2. **OAuth consent screen**: User type *External* (or *Internal* for a Workspace account), app name
+   "AI//CAMPUS ingestion", add the scope `https://www.googleapis.com/auth/gmail.readonly` only, and add the
+   mailbox that receives TLDR AI as a test user. In *Testing* mode Google expires refresh tokens after 7 days;
+   publish the app (it stays unverified, which is fine for your own mailbox) for a long-lived token.
+3. **Credentials** → Create credentials → OAuth client ID → Application type **Desktop app**. Note the client
+   id and secret.
+4. On your own computer (not the server), from `backend/`:
+   ```bash
+   export GMAIL_CLIENT_ID=your-client-id.apps.googleusercontent.com
+   export GMAIL_CLIENT_SECRET=your-client-secret
+   python -m scripts.gmail_oauth          # opens a browser; sign in with the newsletter mailbox
+   ```
+   It uses PKCE and a `http://127.0.0.1:8765/` loopback redirect, requests only `gmail.readonly`, and prints the
+   refresh token once.
+5. Put `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` and `GMAIL_REFRESH_TOKEN` in `backend/.env` or your host's
+   secret settings. Never in the repository, chat, or the frontend.
+6. Check the query: in Gmail, search `from:dan@tldrnewsletter.com subject:"TLDR AI"` and confirm it finds the
+   issues and that the sender address matches. If not, edit `query` and `allowed_senders` for `tldr-ai`.
+7. Test: `python -m scripts.ingest run --dry-run --source tldr-ai`.
+
+Revoking: remove the app at https://myaccount.google.com/permissions. The next run reports the source as
+failed with "Google rejected the Gmail refresh token", and other sources keep working.
+
+How it reads mail: the configured query plus `after:<epoch>` from the cursor, paginated (up to
+`max_messages` per run, oldest first, backlog carried over), `From` checked against `allowed_senders`, HTML
+part parsed (plain text as fallback), TLDR click-tracking links decoded locally without being followed,
+sponsored entries skipped, processed message ids remembered in the cursor.
+
+### Running ingestion manually
+
+```bash
+cd backend
+python -m scripts.ingest check                          # validate configuration
+python -m scripts.ingest run --dry-run                  # fetch + normalise + print; no database needed
+python -m scripts.ingest run --dry-run --source arxiv-cs-ai --show 10
+python -m scripts.ingest run                            # stage into ingestion_items (needs DATABASE_URL, migration 0002)
+python -m scripts.ingest run --source openai-news --json
+python -m scripts.ingest status                         # last outcome, consecutive failures, pending items per source
+python -m scripts.ingest purge                          # retention clean-up on demand
+```
+
+Exit status is 0 when every attempted source succeeded, 1 when any failed, 2 for configuration problems.
+
+Over HTTP (when `INGESTION_ADMIN_TOKEN` is set):
+
+```bash
+curl -X POST https://<api-host>/api/v1/admin/ingestion/runs \
+  -H "Authorization: Bearer $INGESTION_ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"sources": ["arxiv-cs-ai"], "wait": true}'          # wait=false (default) returns 202 and runs in the background
+curl https://<api-host>/api/v1/admin/ingestion/status -H "Authorization: Bearer $INGESTION_ADMIN_TOKEN"
+```
+
+Only configured source keys are accepted (no URLs), one run per process at a time (409 otherwise), and the
+routes are left out of the public OpenAPI schema. CORS stays `GET`-only, so browsers cannot call them.
+
+### Scheduled ingestion
+
+The API process does not schedule anything itself (with several workers that would multiply runs). Pick one:
+
+- **Long-running worker**: `python -m scripts.ingest schedule` runs every `INGESTION_SCHEDULE_MINUTES` (±10%
+  jitter), re-reads the source file each cycle, survives individual failures, and stops cleanly on SIGTERM.
+  Deploy it as a background worker next to the API (same image, command `python -m scripts.ingest schedule`).
+- **Platform cron** (Render/Railway cron job, Cloud Scheduler + Cloud Run job, a VM's crontab):
+  `0 */6 * * * cd /app && python -m scripts.ingest run`.
+- **External trigger**: any scheduler that can send the authenticated `POST /admin/ingestion/runs`.
+
+Whichever you choose, overlapping runs are safe: a source already being collected elsewhere is reported as
+skipped, and a crashed run's job is marked failed after `INGESTION_JOB_STALE_MINUTES`.
+
+### Reliability and outcomes
+
+- Per-source isolation: each source gets its own job row and transaction; any exception, including bugs, is
+  caught and recorded as that source's failure, and the next source runs.
+- Outcomes: **succeeded** (fetched; may have staged 0 new items, e.g. HTTP 304), **skipped** (disabled,
+  Gmail not configured, or already running elsewhere), **failed** (with a safe error summary). The run is
+  `succeeded`, `partial` or `failed`.
+- Idempotency: unique `dedup_key` (canonical URL hash), conditional GET, newest-date cursor, processed Gmail
+  ids, and a check against `stories.canonical_url`. Re-running immediately stages nothing new.
+- Counts per source in the job's `details.counts`: `entries`, `candidates`, `invalid`, `inserted`,
+  `duplicates`, `already_in_bulletin`, `skipped_old`, `over_limit`, `not_modified`, and Gmail message counts.
+- Logs: one line per source with key, outcome and counts (JSON with `LOG_JSON=true`). Fetch logs show scheme
+  and host only. Tokens, request headers, email content and full URLs with query strings are never logged.
+
+### Security
+
+- Secrets only in server-side environment variables (`SecretStr`), never logged or stored in the database.
+- Gmail scope is `gmail.readonly`; the server never sends mail or changes labels.
+- SSRF: only `https` (http per source by opt-in), ports 443/80, no credentials in URLs, no single-label or
+  internal names (`localhost`, `.local`, `.internal`, metadata hosts), IP literals in any notation checked,
+  every DNS answer must be public (private, loopback, link-local, CGNAT, multicast, reserved, IPv4-mapped,
+  NAT64 and 6to4 forms rejected), redirects re-validated per hop (max 3), and the connected peer address is
+  checked again before the body is read. Article links found in content are validated the same way
+  (without DNS) and are never fetched in Stage 3.1.
+- Limits: timeouts, 5 MB response cap, item caps, bounded text lengths, no cookies, no environment proxies.
+- Untrusted content: feeds and emails are parsed as data only. HTML is reduced to plain text, scripts and
+  styles are dropped, XML external entities are not expanded, and text that looks like instructions is
+  stored as an ordinary excerpt for human review; nothing acts on it.
+- Admin endpoints: off unless a ≥ 32-character token is set, constant-time comparison, configured keys only.
+
+### Limitations and next steps
+
+- The example feed URLs and the TLDR sender/query were not fetched live (the build sandbox blocks outbound
+  feed traffic). Tests use synthetic fixtures modelled on the formats. Run the dry runs above once.
+- The TLDR parser depends on TLDR's current layout (label suffixes such as "(4 minute read)" and
+  `tracking.tldrnewsletter.com/CL0/` links). If it changes, the source reports zero items and a warning
+  rather than guessing; update `parsers/tldr.py` with a real sample.
+- DNS rebinding is narrowed (answers checked, then the connected peer checked) but the request line and
+  headers are sent before the peer check. No secrets are sent to feed hosts.
+- Staged items are not yet linked to `sources` rows; Stage 3.2 maps `source_key`/publisher to a source when
+  it creates draft stories. Moving items beyond `pending` is Stage 3.2's job.
 
 ## Connecting the frontend
 
@@ -335,9 +571,10 @@ Consider `DOCS_ENABLED=false` in production if you do not want the schema public
 
 ## Phase boundaries
 
-Implemented: schema, migrations, public read API, keyword search, safe seed, tests, docs.
-Not implemented (Phase 3+): Gmail/newsletter ingestion and OAuth, RSS discovery and scheduling, LLM
-summaries, fact verification and editorial workflow, write/admin API and authentication, embeddings and
-semantic or conversational search, audio generation, automated publishing. `ingestion_jobs`, the
+Implemented: schema, migrations, public read API, keyword search, safe seed, tests, docs (Phase 2);
+RSS/Atom and Gmail (TLDR AI) ingestion into a temporary staging table, scheduling, admin trigger (Phase 3.1).
+Not implemented (Phase 3.2+): LLM summaries, ranking, fact verification and editorial workflow, edition
+generation, publishing (which will require authorised human approval), embeddings and semantic or
+conversational search, audio generation. `ingestion_jobs`, the
 `in_review`/`rejected` story states, `summary_origin`, `canonical_url` and the `mode` field of search
 responses are the hooks those phases will use.

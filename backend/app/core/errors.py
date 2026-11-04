@@ -18,9 +18,11 @@ logger = logging.getLogger("app.errors")
 
 _HTTP_CODES = {
     400: "bad_request",
+    401: "unauthorized",
     404: "not_found",
     405: "method_not_allowed",
     406: "not_acceptable",
+    409: "conflict",
     413: "payload_too_large",
     429: "rate_limited",
 }

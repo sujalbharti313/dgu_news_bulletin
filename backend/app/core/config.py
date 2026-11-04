@@ -53,6 +53,33 @@ class Settings(BaseSettings):
     log_json: bool = False
     docs_enabled: bool = True
 
+    # --- Phase 3.1 ingestion. All server-side only; never exposed to the frontend. ---
+    # TOML file listing the RSS/Atom feeds and newsletters to collect (relative to backend/).
+    ingestion_sources_file: str = "config/ingestion_sources.toml"
+    # Bearer token for the admin ingestion endpoints. Unset = the endpoints do not exist (404).
+    ingestion_admin_token: SecretStr | None = None
+    # Staged items are temporary hand-offs to later stages, deleted automatically after this many days.
+    ingestion_item_retention_days: int = Field(default=14, ge=1, le=90)
+    # Job bookkeeping rows (no article content) older than this are purged, except each source's last success.
+    ingestion_job_retention_days: int = Field(default=90, ge=7, le=730)
+    # A job still "running" after this long is treated as crashed and marked failed.
+    ingestion_job_stale_minutes: int = Field(default=60, ge=5, le=1440)
+    # Interval used by `python -m scripts.ingest schedule`.
+    ingestion_schedule_minutes: int = Field(default=360, ge=15, le=10_080)
+    ingestion_http_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
+    ingestion_max_response_bytes: int = Field(default=5_000_000, ge=10_000, le=50_000_000)
+    ingestion_max_retries: int = Field(default=3, ge=0, le=6)
+    ingestion_max_items_per_source: int = Field(default=100, ge=1, le=1000)
+    ingestion_user_agent: str = Field(default="AI-CAMPUS-Ingestion/0.3", min_length=3, max_length=200)
+    # Use HTTP(S)_PROXY from the environment for outbound fetches. Off by default: a proxy hides the real
+    # peer address from the SSRF guard's post-connect check.
+    ingestion_http_trust_env: bool = False
+
+    # Gmail API (OAuth 2.0, gmail.readonly). All three must be set or Gmail sources are skipped.
+    gmail_client_id: str | None = None
+    gmail_client_secret: SecretStr | None = None
+    gmail_refresh_token: SecretStr | None = None
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:
@@ -86,6 +113,25 @@ class Settings(BaseSettings):
         normalise_database_url(value.get_secret_value())  # raises ValueError on an unusable URL
         return value
 
+    @field_validator("ingestion_admin_token", "gmail_client_secret", "gmail_refresh_token")
+    @classmethod
+    def _blank_secret_is_unset(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None or not value.get_secret_value().strip():
+            return None
+        return SecretStr(value.get_secret_value().strip())
+
+    @field_validator("gmail_client_id")
+    @classmethod
+    def _blank_is_unset(cls, value: str | None) -> str | None:
+        return value.strip() if value and value.strip() else None
+
+    @field_validator("ingestion_admin_token")
+    @classmethod
+    def _admin_token_strength(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None and len(value.get_secret_value()) < 32:
+            raise ValueError("INGESTION_ADMIN_TOKEN must be at least 32 characters (use a random value).")
+        return value
+
     @model_validator(mode="after")
     def _production_rules(self) -> "Settings":
         if self.app_env is Environment.PRODUCTION:
@@ -103,6 +149,10 @@ class Settings(BaseSettings):
         if self.database_url is None:
             return None
         return normalise_database_url(self.database_url.get_secret_value())
+
+    @property
+    def gmail_configured(self) -> bool:
+        return bool(self.gmail_client_id and self.gmail_client_secret and self.gmail_refresh_token)
 
     def use_prepared_statements(self) -> bool:
         if self.db_prepared_statements is not None:

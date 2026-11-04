@@ -2,7 +2,7 @@
 
 from app.models.briefing import Briefing
 from app.models.edition import Edition
-from app.models.ingestion import IngestionJob
+from app.models.ingestion import IngestionItem, IngestionJob
 from app.models.reference import CampusItem, CareerSignal, IndiaEntry
 from app.models.research import ResearchPaper
 from app.models.source import Source
@@ -15,6 +15,7 @@ __all__ = [
     "CareerSignal",
     "Edition",
     "IndiaEntry",
+    "IngestionItem",
     "IngestionJob",
     "ResearchPaper",
     "Source",
