@@ -1,0 +1,63 @@
+# AI//CAMPUS story categories for the Phase 3.3 intelligence engine.
+#
+# The model must pick one `primary` category and up to `max_secondary` secondary ones, by key. Anything
+# else is rejected by validation. Validate this file with: python -m scripts.intelligence check
+#
+#   key          lower-case-with-dashes; stored with every analysis (renaming one makes analyses stale)
+#   label        shown to editors
+#   description  what belongs here; sent to the model as guidance
+#   topic        the frontend topic the category maps to: models | research | tools | policy | india |
+#                careers | campus (see src/lib/types.ts)
+#
+# Changing this file changes the engine key, so the next run re-analyses current stories (bounded by
+# AI_MAX_STORIES_PER_RUN).
+
+max_secondary = 2
+
+[[categories]]
+key = "ai-research"
+label = "AI Research"
+topic = "research"
+description = "Papers, preprints, new methods, benchmarks and research results from labs or universities."
+
+[[categories]]
+key = "model-releases"
+label = "Model Releases"
+topic = "models"
+description = "New or updated AI models (language, vision, audio, multimodal), including open-weight releases."
+
+[[categories]]
+key = "ai-tools-development"
+label = "AI Tools and Development"
+topic = "tools"
+description = "Developer tools, APIs, SDKs, frameworks, agents and products people can build with or use."
+
+[[categories]]
+key = "industry-business"
+label = "Industry and Business"
+topic = "models"
+description = "Funding, acquisitions, partnerships, pricing, company strategy and market moves."
+
+[[categories]]
+key = "india-ai"
+label = "India × AI"
+topic = "india"
+description = "AI developments in or about India: government programmes, Indian labs, startups, languages, policy."
+
+[[categories]]
+key = "ai-safety-governance"
+label = "AI Safety and Governance"
+topic = "policy"
+description = "Safety research and evaluations, regulation, policy, legal cases, incidents and responsible AI."
+
+[[categories]]
+key = "education-careers"
+label = "Education and Careers"
+topic = "careers"
+description = "Learning resources, courses, skills, hiring, internships and AI in education."
+
+[[categories]]
+key = "infrastructure-hardware"
+label = "Infrastructure and Hardware"
+topic = "tools"
+description = "Chips, accelerators, data centres, compute, inference infrastructure and energy."
