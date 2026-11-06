@@ -75,6 +75,23 @@ class Settings(BaseSettings):
     # peer address from the SSRF guard's post-connect check.
     ingestion_http_trust_env: bool = False
 
+    # --- Phase 3.2 processing and deduplication thresholds (see README "Similarity thresholds"). ---
+    # Near-duplicate (same article, lightly edited): word 3-shingle Jaccard of the two excerpts ...
+    processing_near_duplicate_text_threshold: float = Field(default=0.5, ge=0.05, le=1.0)
+    # ... and, together with it, at least this much title similarity.
+    processing_near_duplicate_title_threshold: float = Field(default=0.4, ge=0.0, le=1.0)
+    # Near-duplicate when an excerpt is missing: near-identical title, same site, within the window below.
+    processing_title_only_threshold: float = Field(default=0.85, ge=0.5, le=1.0)
+    processing_title_only_window_hours: int = Field(default=48, ge=1, le=720)
+    processing_near_duplicate_window_hours: int = Field(default=168, ge=1, le=720)
+    # Same story (different reports of one event): weighted title/text/entity score and time window.
+    processing_story_threshold: float = Field(default=0.3, ge=0.05, le=1.0)
+    processing_story_window_hours: int = Field(default=96, ge=1, le=720)
+    # Excerpts shorter than this many words are too short for text-based duplicate signals.
+    processing_min_body_tokens: int = Field(default=15, ge=3, le=200)
+    # Upper bound on staged items loaded per processing run (newest first); keeps a run's cost bounded.
+    processing_max_items: int = Field(default=5000, ge=10, le=50_000)
+
     # Gmail API (OAuth 2.0, gmail.readonly). All three must be set or Gmail sources are skipped.
     gmail_client_id: str | None = None
     gmail_client_secret: SecretStr | None = None

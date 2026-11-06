@@ -12,14 +12,20 @@ What is stored, and for how long:
   older than INGESTION_JOB_RETENTION_DAYS are deleted, except each source's latest success (its cursor).
 Ingestion never updates or deletes stories, editions or sources; it only reads stories.canonical_url to
 avoid re-staging an article that is already in the bulletin.
+
+Provenance (added for Stage 3.2): when another source carries a canonical URL that is already staged,
+the row is not duplicated, but that source is appended to the row's `extra.also_seen` (at most
+MAX_SIGHTINGS entries, metadata only), so no source reference is lost. Re-collecting the same item from
+the same feed or message adds nothing, which keeps repeated runs idempotent.
 """
 
+import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
-from sqlalchemy import and_, delete, func, insert, select, update
+from sqlalchemy import and_, delete, func, insert, select, text, update
 from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
@@ -31,6 +37,7 @@ from app.models.ingestion import IngestionItem, IngestionJob
 from app.models.story import Story
 
 ERROR_SUMMARY_LIMIT = 2000
+MAX_SIGHTINGS = 10
 
 
 @dataclass
@@ -38,6 +45,51 @@ class SaveResult:
     inserted: int = 0
     duplicates: int = 0
     already_in_bulletin: int = 0
+    # Duplicates that came from a different source/feed/message and were recorded in extra.also_seen.
+    sightings: int = 0
+
+
+def sighting_for(item: NormalizedItem) -> dict[str, Any]:
+    """Metadata of another source's copy of an already-staged URL. No excerpt or article text."""
+    sighting = {
+        "source_key": item.source_key,
+        "source_type": item.source_type.value,
+        "feed_identifier": item.feed_identifier,
+        "original_url": item.original_url,
+        "title": item.title,
+        "publisher": item.publisher,
+        "published_at": item.published_at.isoformat() if item.published_at else None,
+        "collected_at": item.collected_at.isoformat(),
+    }
+    if item.extra.get("newsletter_date"):
+        sighting["newsletter_date"] = item.extra["newsletter_date"]
+    return sighting
+
+
+def _is_new_sighting(existing_source: tuple[str, str], extra: dict | None, item: NormalizedItem) -> bool:
+    key = (item.source_key, item.feed_identifier)
+    seen = (extra or {}).get("also_seen") or []
+    if key == existing_source or len(seen) >= MAX_SIGHTINGS:
+        return False
+    return not any(isinstance(s, dict) and (s.get("source_key"), s.get("feed_identifier")) == key for s in seen)
+
+
+# Appends one sighting unless that source/feed is the row's own or already listed, or the list is full.
+_ADD_SIGHTING = text(
+    """
+    UPDATE ingestion_items
+    SET extra = jsonb_set(
+        COALESCE(extra, '{}'::jsonb), '{also_seen}',
+        COALESCE(extra->'also_seen', '[]'::jsonb) || jsonb_build_array(CAST(:sighting AS jsonb))
+    )
+    WHERE dedup_key = :dedup_key
+      AND NOT (source_key = :source_key AND feed_identifier = :feed_identifier)
+      AND jsonb_array_length(COALESCE(extra->'also_seen', '[]'::jsonb)) < :max_sightings
+      AND NOT COALESCE(extra->'also_seen', '[]'::jsonb) @> jsonb_build_array(
+          jsonb_build_object('source_key', CAST(:source_key AS text), 'feed_identifier', CAST(:feed_identifier AS text))
+      )
+    """
+)
 
 
 @dataclass
@@ -73,14 +125,17 @@ def _truncate(message: str | None) -> str | None:
     return message[: ERROR_SUMMARY_LIMIT - 1] + "…" if len(message) > ERROR_SUMMARY_LIMIT else message
 
 
-def _unique_by_key(items: list[NormalizedItem]) -> tuple[list[NormalizedItem], int]:
+def _unique_by_key(items: list[NormalizedItem]) -> tuple[list[NormalizedItem], list[NormalizedItem]]:
+    """First occurrence of each dedup key, and the repeats (which may still be new sightings)."""
     seen: set[str] = set()
-    unique = []
+    unique, repeats = [], []
     for item in items:
         if item.dedup_key not in seen:
             seen.add(item.dedup_key)
             unique.append(item)
-    return unique, len(items) - len(unique)
+        else:
+            repeats.append(item)
+    return unique, repeats
 
 
 class SqlIngestionStore:
@@ -187,8 +242,8 @@ class SqlIngestionStore:
 
     def save_items(self, items, job_id, expires_at) -> SaveResult:
         result = SaveResult()
-        items, in_batch_duplicates = _unique_by_key(items)
-        result.duplicates += in_batch_duplicates
+        items, repeats = _unique_by_key(items)
+        result.duplicates += len(repeats)
         if not items:
             return result
         with self.db.write_session() as s:
@@ -216,6 +271,23 @@ class SqlIngestionStore:
                 ).all()
                 result.inserted = len(inserted)
                 result.duplicates += len(fresh) - len(inserted)
+                inserted_keys = set(inserted)
+                already_staged = [i for i in fresh if i.dedup_key not in inserted_keys]
+                for item in already_staged + [r for r in repeats if r.canonical_url not in published]:
+                    # Sequential, in this transaction: a repeat in the same batch sees earlier appends.
+                    result.sightings += (
+                        s.execute(
+                            _ADD_SIGHTING,
+                            {
+                                "sighting": json.dumps(sighting_for(item)),
+                                "dedup_key": item.dedup_key,
+                                "source_key": item.source_key,
+                                "feed_identifier": item.feed_identifier,
+                                "max_sightings": MAX_SIGHTINGS,
+                            },
+                        ).rowcount
+                        or 0
+                    )
         return result
 
     def source_statuses(self, keys: list[str]) -> dict[str, SourceStatus]:
@@ -345,16 +417,35 @@ class MemoryIngestionStore:
 
     def save_items(self, items, job_id, expires_at):
         result = SaveResult()
-        items, result.duplicates = _unique_by_key(items)
+        items, repeats = _unique_by_key(items)
+        result.duplicates = len(repeats)
         for item in items:
             if item.canonical_url in self.published_canonical_urls:
                 result.already_in_bulletin += 1
             elif item.dedup_key in self.items:
                 result.duplicates += 1
+                result.sightings += self._add_sighting(item)
             else:
-                self.items[item.dedup_key] = {"item": item, "job_id": job_id, "expires_at": expires_at}
+                self.items[item.dedup_key] = {
+                    "item": item,
+                    "job_id": job_id,
+                    "expires_at": expires_at,
+                    "extra": dict(item.extra),
+                }
                 result.inserted += 1
+        for item in repeats:
+            if item.dedup_key in self.items:
+                result.sightings += self._add_sighting(item)
         return result
+
+    def _add_sighting(self, item: NormalizedItem) -> int:
+        entry = self.items[item.dedup_key]
+        own = (entry["item"].source_key, entry["item"].feed_identifier)
+        extra = entry.setdefault("extra", dict(entry["item"].extra))
+        if not _is_new_sighting(own, extra, item):
+            return 0
+        extra["also_seen"] = [*extra.get("also_seen", []), sighting_for(item)]
+        return 1
 
     def source_statuses(self, keys):
         statuses = {key: SourceStatus(source_key=key) for key in keys}

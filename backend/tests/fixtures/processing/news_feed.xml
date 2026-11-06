@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic test feed for Stage 3.2. Fictional organisation, product and events on reserved example domains. -->
+<rss version="2.0">
+  <channel>
+    <title>Example Tech News</title>
+    <link>https://technews.example.org/</link>
+    <description>Test fixture</description>
+    <item>
+      <title>Nimbus Labs launches Nimbus 2.5 with a 1M-token context window</title>
+      <link>https://technews.example.org/2026/11/nimbus-launches-nimbus-2-5</link>
+      <pubDate>Fri, 06 Nov 2026 10:00:00 GMT</pubDate>
+      <description>Nimbus Labs released Nimbus 2.5 on Friday. The new model has a 1M-token context window, and the company says it scores 71.2% on SWE-bench Verified. It is available in the API.</description>
+    </item>
+    <item>
+      <title>Introducing Nimbus 2.5, our most capable model</title>
+      <link>https://nimbus.example.com/blog/nimbus-2-5/?utm_campaign=newsletter&amp;fbclid=abc</link>
+      <pubDate>Fri, 06 Nov 2026 08:00:00 GMT</pubDate>
+      <description>Linked from the lab's announcement.</description>
+    </item>
+    <item>
+      <title>Nimbus Labs cuts API prices for Nimbus 2.5 by half</title>
+      <link>https://technews.example.org/2026/11/nimbus-api-pricing</link>
+      <pubDate>Fri, 06 Nov 2026 11:00:00 GMT</pubDate>
+      <description>Nimbus Labs reduced pricing for Nimbus 2.5 API usage to $1 per million input tokens, half the previous price.</description>
+    </item>
+  </channel>
+</rss>

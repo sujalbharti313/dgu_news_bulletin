@@ -5,6 +5,7 @@
     python -m scripts.ingest run                           # all enabled sources -> ingestion_items
     python -m scripts.ingest run --source arxiv-cs-ai      # one source (repeatable)
     python -m scripts.ingest schedule                      # run every INGESTION_SCHEDULE_MINUTES until stopped
+    python -m scripts.ingest schedule --process            # ... and run Stage 3.2 processing after each cycle
     python -m scripts.ingest purge                         # delete expired staged items and old job rows
     python -m scripts.ingest status                        # last outcome per source
 
@@ -109,6 +110,12 @@ def cmd_schedule(settings: Settings, args) -> int:
                 # Sources are re-read each cycle so config changes apply without a restart.
                 report = IngestionRunner(settings, SqlIngestionStore(db)).run()
                 _print_report(report, args.json)
+                if args.process:
+                    # Stage 3.2 over everything staged so far; failures are recorded and logged, never fatal.
+                    from app.processing.runner import ProcessingRunner
+                    from app.processing.store import SqlProcessingStore
+
+                    ProcessingRunner(settings, SqlProcessingStore(db)).run()
             except SourceConfigError as exc:
                 logger.error("source configuration invalid, skipping this cycle: %s", exc.safe_message)
             except Exception:  # noqa: BLE001 - keep the scheduler alive; the next cycle retries
@@ -167,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--show", type=int, default=5, help="Items to print per source in a dry run.")
     schedule = sub.add_parser("schedule", help="Run ingestion repeatedly until stopped.", parents=[common])
     schedule.add_argument("--interval-minutes", type=int, help="Override INGESTION_SCHEDULE_MINUTES.")
+    schedule.add_argument("--process", action="store_true", help="Run Stage 3.2 processing after each cycle.")
     sub.add_parser("purge", help="Delete expired staged items and old job rows.", parents=[common])
     sub.add_parser("status", help="Show the last outcome of each source.", parents=[common])
     args = parser.parse_args(argv)
