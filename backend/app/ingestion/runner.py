@@ -199,7 +199,7 @@ class IngestionRunner:
             self.settings.ingestion_max_items_per_source,
         )
         if isinstance(source, RssSourceConfig):
-            return collect_rss(source, http, cursor, max_items=max_items)
+            return collect_rss(source, http, cursor, max_items=max_items, now=self.clock())
         client = GmailClient(
             http,
             client_id=self.settings.gmail_client_id or "",

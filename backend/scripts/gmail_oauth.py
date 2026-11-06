@@ -125,6 +125,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     payload = response.json()
     granted = set(payload.get("scope", "").split())
+    if GMAIL_SCOPE not in granted:
+        print(
+            "Google did not grant Gmail read access (the 'Read your email' box was probably left unticked). "
+            "Remove the app's access at https://myaccount.google.com/permissions and run this again, "
+            "ticking that box.",
+            file=sys.stderr,
+        )
+        return 1
     if granted - {GMAIL_SCOPE}:
         print("Warning: Google granted more scopes than requested: " + ", ".join(sorted(granted)), file=sys.stderr)
     refresh = payload.get("refresh_token")

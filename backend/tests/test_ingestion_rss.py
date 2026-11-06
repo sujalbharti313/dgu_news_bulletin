@@ -143,3 +143,19 @@ def test_external_entities_are_not_expanded():
     xxe = xxe.replace(b"file:///etc/hostname", secret_file.as_uri().encode())
     result = parse_feed(xxe, feed_url=SOURCE.url, source=SOURCE)
     assert all(hostname not in (i.title or "") for i in result.items)
+
+
+def test_first_run_only_takes_entries_inside_lookback_window():
+    # A feed that carries its whole archive must not stage years-old entries on the first run.
+    http = make_http(lambda r: httpx.Response(200, content=fixture("rss2.xml")))
+    source = SOURCE.model_copy(update={"initial_lookback_days": 1})
+    now = datetime(2026, 11, 4, 10, 45, tzinfo=UTC)  # window starts 2026-11-03 10:45
+    result = collect_rss(source, http, None, max_items=50, now=now)
+    dated = [i for i in result.items if i.published_at is not None]
+    assert [i.published_at for i in dated] == [datetime(2026, 11, 3, 11, 0, tzinfo=UTC)]
+    assert result.counts["skipped_old"] == 2
+    assert result.cursor["latest_published_at"] == "2026-11-03T11:00:00+00:00"
+
+    # Once a cursor exists the lookback no longer applies.
+    later = collect_rss(source, http, {"latest_published_at": "2026-11-01T00:00:00+00:00"}, max_items=50, now=now)
+    assert later.counts["skipped_old"] == 0

@@ -61,7 +61,7 @@ cp .env.example .env                 # then set DATABASE_URL (see below)
 ```
 
 `requirements.txt` is the fully pinned runtime lock (compiled from `requirements.in` with
-`uv pip compile`); `requirements-dev.txt` adds the test tools. To upgrade, edit the `.in` file and recompile.
+`uv pip compile --universal --python-version 3.12`, so Windows, macOS and Linux all install from it); `requirements-dev.txt` adds the test tools. To upgrade, edit the `.in` file and recompile.
 
 ## Environment variables
 
@@ -402,6 +402,7 @@ publisher = "Example Lab"         # optional; otherwise the feed's own title. Ne
 url = "https://lab.example.com/feed.xml"   # https only (allow_http = true to opt in per source)
 enabled = true
 max_items = 50                    # optional per-run cap
+initial_lookback_days = 7          # first run only: ignore older archive entries
 ```
 
 `python -m scripts.ingest check` validates the file (unknown fields, duplicate keys or URLs, non-HTTPS URLs

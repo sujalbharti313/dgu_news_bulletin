@@ -7,7 +7,7 @@ entries not newer than the newest date already collected are skipped. Dedup in t
 
 import calendar
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import feedparser
 
@@ -117,7 +117,14 @@ def parse_feed(
     return CollectResult(items=items, cursor=cursor, counts=counts, warnings=warnings)
 
 
-def collect_rss(source: RssSourceConfig, http: SafeHttpClient, cursor: dict | None, *, max_items: int) -> CollectResult:
+def collect_rss(
+    source: RssSourceConfig,
+    http: SafeHttpClient,
+    cursor: dict | None,
+    *,
+    max_items: int,
+    now: datetime | None = None,
+) -> CollectResult:
     cursor = cursor or {}
     headers = {"Accept": ACCEPT}
     if cursor.get("etag"):
@@ -135,6 +142,9 @@ def collect_rss(source: RssSourceConfig, http: SafeHttpClient, cursor: dict | No
             since = datetime.fromisoformat(cursor["latest_published_at"])
         except ValueError:
             since = None
+    if since is None and now is not None:
+        # No cursor yet: only take entries from the lookback window, not the feed's whole archive.
+        since = now - timedelta(days=source.initial_lookback_days)
     result = parse_feed(
         response.content,
         feed_url=source.url,
