@@ -402,6 +402,7 @@ publisher = "Example Lab"         # optional; otherwise the feed's own title. Ne
 url = "https://lab.example.com/feed.xml"   # https only (allow_http = true to opt in per source)
 enabled = true
 max_items = 50                    # optional per-run cap
+initial_lookback_days = 7          # first run only: ignore older archive entries
 ```
 
 `python -m scripts.ingest check` validates the file (unknown fields, duplicate keys or URLs, non-HTTPS URLs

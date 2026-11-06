@@ -31,6 +31,10 @@ class _SourceBase(BaseModel):
     # Attribution shown later. Leave unset rather than guessing: the feed's own title is used, or nothing.
     publisher: str | None = Field(default=None, min_length=1, max_length=200)
     max_items: int | None = Field(default=None, ge=1, le=1000)
+    # First run only: how far back to look when no cursor exists yet. Many feeds carry their whole
+    # archive (one official blog lists items back to 2015), so without a floor the first run would
+    # stage the oldest entries.
+    initial_lookback_days: int = Field(default=7, ge=1, le=60)
     notes: str | None = Field(default=None, max_length=1000)
 
 
@@ -57,8 +61,6 @@ class GmailSourceConfig(_SourceBase):
     allowed_senders: list[str] = Field(min_length=1, max_length=20)
     parser: Literal["tldr"] = "tldr"
     max_messages: int = Field(default=10, ge=1, le=100)
-    # First run only: how far back to look when no cursor exists yet.
-    initial_lookback_days: int = Field(default=7, ge=1, le=60)
 
     @field_validator("allowed_senders")
     @classmethod
