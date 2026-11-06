@@ -1,15 +1,17 @@
-# AI//CAMPUS backend (Phases 2 and 3.1)
+# AI//CAMPUS backend (Phases 2, 3.1 and 3.2)
 
 A public, read-only REST API for the AI//CAMPUS bulletin, backed by Supabase PostgreSQL, plus (Phase 3.1)
-automated news ingestion from RSS/Atom feeds and the TLDR AI newsletter via Gmail. See [News ingestion](#news-ingestion-phase-31).
+automated news ingestion from RSS/Atom feeds and the TLDR AI newsletter via Gmail (Phase 3.1), and news
+processing, deduplication and story clustering (Phase 3.2). See [News ingestion](#news-ingestion-phase-31) and
+[News processing](#news-processing-and-deduplication-phase-32).
 FastAPI · Pydantic v2 · SQLAlchemy 2 · psycopg 3 · Alembic · httpx · feedparser · pytest.
 
 The backend is independent of the Next.js frontend: it lives in `backend/`, has its own dependencies,
 and deploys to any Python host. The frontend talks to it only through `NEXT_PUBLIC_API_BASE_URL`.
 
-> **Status of the live database:** the Supabase project has migration `0001` and the reference data.
-> Migration `0002` (Phase 3.1 ingestion tables) has been tested against a local PostgreSQL 16 only; apply it
-> with `alembic upgrade head` before running ingestion against Supabase.
+> **Status of the live database:** the Supabase project has migrations `0001` and `0002` and the reference data.
+> Migration `0003` (Phase 3.2 processing columns) has been tested against a local PostgreSQL 16 only; apply it
+> with `alembic upgrade head` before running processing against Supabase.
 
 ---
 
@@ -33,10 +35,11 @@ backend/
 │   ├── middleware/           Request id + access log + security headers; per-IP rate limiting
 │   ├── api/v1/               Versioned router and endpoint modules (admin_ingestion.py: token-protected)
 │   ├── ingestion/            Phase 3.1: sources, SSRF guard, HTTP client, providers, parsers, store, runner
+│   ├── processing/           Phase 3.2: normalisation, deduplication, story clusters, Stage 3.3 contract
 │   └── seed/                 Seed runner + JSON fixtures exported from the frontend's data files
 ├── config/                   ingestion_sources.toml (the feeds and newsletters to collect)
 ├── migrations/               Alembic environment and versioned migrations
-├── scripts/                  seed.py, ingest.py, gmail_oauth.py CLIs, export_frontend_fixtures.mjs
+├── scripts/                  seed.py, ingest.py, process.py, gmail_oauth.py CLIs, export_frontend_fixtures.mjs
 ├── tests/                    pytest suite (API, constraints, migrations, contract, seed, config)
 ├── alembic.ini · pyproject.toml · requirements*.txt · Dockerfile · .env.example
 ```
@@ -84,6 +87,7 @@ All settings are read from the environment or `backend/.env` (run commands from 
 | `DOCS_ENABLED` | `true` | Serve `/docs`, `/redoc`, `/openapi.json`. |
 | `TEST_DATABASE_URL` | unset | Tests only. Must be a local database whose name contains `test`. |
 | `INGESTION_*`, `GMAIL_*` | see below | Phase 3.1 ingestion. See [Ingestion settings](#ingestion-settings). |
+| `PROCESSING_*` | see below | Phase 3.2 thresholds. See [Similarity thresholds](#similarity-thresholds). |
 
 Never put any of these in the frontend. The only frontend variable is `NEXT_PUBLIC_API_BASE_URL`.
 
@@ -135,6 +139,8 @@ Initial schema (`0001`): `sources`, `editions`, `stories`, `audio_briefings`, `t
 `india_entries`, `career_signals`, `campus_items`, `ingestion_jobs`, plus an `updated_at` trigger on each.
 Ingestion (`0002`, additive): the temporary `ingestion_items` staging table, and `source_key`, `details`, a
 `skipped` status and a one-running-job-per-source index on `ingestion_jobs`. See [Database changes](#database-changes-migration-0002).
+Processing (`0003`, additive): six processing columns on `ingestion_items` and the `story_processing` job type.
+See [Storage policy and database changes](#storage-policy-and-database-changes-migration-0003).
 
 ## Seeding
 
@@ -287,6 +293,7 @@ createdb aicampus_test                      # any local PostgreSQL 14+
 export TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/aicampus_test
 pytest                                       # API, constraints, migrations, seed, contract, config, ingestion
 pytest tests/test_ingestion_*.py             # ingestion only
+pytest tests/test_processing_*.py            # processing and deduplication only
 ruff check . && ruff format --check .
 ```
 
@@ -300,6 +307,7 @@ ruff check . && ruff format --check .
   fields of the matching TypeScript interface, and that seeded API content equals the frontend sample files.
 - Nothing in the suite talks to Supabase, Google or any feed: ingestion tests use `httpx.MockTransport`, a
   fake DNS resolver, a fake Gmail API/token endpoint and synthetic fixtures in `tests/fixtures/ingestion/`.
+  Processing tests use synthetic articles (`tests/processing_helpers.py`, `tests/fixtures/processing/`).
 
 ## News ingestion (Phase 3.1)
 
@@ -525,8 +533,217 @@ skipped, and a crashed run's job is marked failed after `INGESTION_JOB_STALE_MIN
   rather than guessing; update `parsers/tldr.py` with a real sample.
 - DNS rebinding is narrowed (answers checked, then the connected peer checked) but the request line and
   headers are sent before the peer check. No secrets are sent to feed hosts.
-- Staged items are not yet linked to `sources` rows; Stage 3.2 maps `source_key`/publisher to a source when
-  it creates draft stories. Moving items beyond `pending` is Stage 3.2's job.
+- Staged items are not linked to `sources` rows; the stage that creates draft stories maps `source_key` and
+  publisher to a source. Stage 3.2 moves items from `pending` to `processed` or `discarded`.
+
+## News processing and deduplication (Phase 3.2)
+
+Turns the items Stage 3.1 staged in `ingestion_items` into clean, deduplicated **story clusters** with every
+source reference kept, for Stage 3.3 (the AI Intelligence Engine). It uses no AI API and makes no network
+calls; every decision is deterministic and explained in the stored reasons. **It never publishes,
+summarises, scores or deletes anything.**
+
+### Architecture
+
+```
+ingestion_items (pending) ──► store.py (load unexpired, job lock) ──► pipeline.py, item by item:
+     prepare   text.py      normalise + validate title, URLs (Stage 3.1 SSRF validator), publisher, dates, flags
+     features  features.py  tokens, shingles, identifiers, entities, event type, content hash
+     decide    matching.py  exact duplicate → near duplicate → same story → new cluster
+──► ingestion_items (processed: cluster_id, dedup_relation, duplicate_of_id, content_hash, processing)
+──► clusters.py builds StoryCluster records on read (contract.py) ──► Stage 3.3 / admin endpoint / CLI
+```
+
+| Module | Responsibility |
+| --- | --- |
+| `app/processing/text.py` | Readable text from HTML (drops nav, header, footer, cookie/share/related blocks; prefers `<article>`/`<main>`; keeps code, numbers and quotes), whitespace/entity/mojibake repair, title validation, publisher tidy-up, UTC dates, instruction-like content flags |
+| `app/processing/features.py` | Tokens with light stemming, word 3-shingles, char trigrams, arXiv/DOI identifiers, organisation gazetteer, model/product names with versions, benchmarks, event-type lexicon, content hash |
+| `app/processing/matching.py` | The three decision rules and their vetoes |
+| `app/processing/pipeline.py` | Ordering, the exact-match index and blocking index, assignment, per-item failure isolation |
+| `app/processing/clusters.py` | Clusters, representative selection, source references and sightings |
+| `app/processing/contract.py` | The typed Stage 3.3 output schema (`StoryCluster`) |
+| `app/processing/store.py`, `runner.py`, `service.py` | Postgres and in-memory stores, the run lock, entry points for Stage 3.3 |
+| `app/api/v1/endpoints/admin_processing.py`, `scripts/process.py` | Token-protected endpoints and the CLI |
+
+How Stage 3.1 output enters: every unexpired row of `ingestion_items` whose `processing_status` is `pending`
+(or `failed` from an earlier attempt) is processed; rows already `processed` are context and keep their
+decision. `scripts.ingest schedule --process` runs processing after each ingestion cycle, or run
+`python -m scripts.process run` from cron after `scripts.ingest run`.
+
+### Normalisation
+
+Titles, excerpts and publishers are re-normalised defensively (Stage 3.1 already strips markup): HTML entities
+decoded, NFKC, hyphen look-alikes unified, zero-width and bidi control characters removed, paragraphs kept,
+UTF-8 mojibake ("â€™") repaired only when the round trip is clean. Missing or bad values are never filled in:
+
+| Problem | Result |
+| --- | --- |
+| Empty, URL-only, generic ("Untitled", "Read more") or 1–2 character title | item `discarded` with a reason (`missing_title`, `title_is_url`, `generic_title`, `title_too_short`) |
+| Unsafe or malformed URL (re-checked with Stage 3.1's `validate_url`: private/metadata IPs, `localhost`, credentials, odd ports, non-http schemes) | `discarded`, `unsafe_or_malformed_url` |
+| Missing publisher | `publisher: null`; `site` (the URL's host) is reported separately and never presented as the publisher |
+| Missing, unparseable, pre-1990 or future date | `publishedAt: null`; time windows then use the newsletter date, else the collection time, and `processing.timeBasis` says which |
+
+Publication dates are UTC-aware. The URL as published (`originalUrl`) and the canonical URL are both kept.
+
+### URL canonicalisation
+
+`app/services/urls.py` (shared with Stage 3.1, so dedup keys stay consistent) lower-cases the host, drops
+`www.` and the default port, removes fragments (hash-bang routes `#!/…` are kept, they select content),
+removes trailing slashes, sorts the remaining query and removes tracking parameters: `utm_*`, `mc_*`, `pk_*`,
+`hsa_*`, `oly_*`, `vero_*`, `_hs*`, `fbclid`, `gclid`, `gclsrc`, `dclid`, `gbraid`, `wbraid`, `msclkid`, `yclid`,
+`twclid`, `ttclid`, `li_fat_id`, `igshid`, `mkt_tok`, `_ga`, `_gl`, `ref`, `ref_src`, `ref_url`, `cmpid`, `s_cid`,
+`wickedid`, `mbid`. Other parameters (`?v=`, `?id=`, `?page=`) are kept. The canonical URL is a deduplication
+key, never a link to show: it is always https. It is never invented; an item without a valid URL is discarded.
+
+### Deduplication and clustering
+
+Each item gets exactly one relation to its cluster:
+
+| Relation | Meaning | Rule |
+| --- | --- | --- |
+| `same_url` (source reference only) | Another source carried the identical canonical URL | Stage 3.1 keeps one row per canonical URL; other sources are appended to `extra.also_seen` (max 10). Same feed or message again adds nothing |
+| `exact_duplicate` | The same article under another URL | Same arXiv id (abs/pdf/any version) or DOI from the URL, **or** identical content hash (case-folded words of title + excerpt) when the excerpt has ≥ `PROCESSING_MIN_BODY_TOKENS` words |
+| `near_duplicate` | A lightly modified copy | Excerpt word-3-shingle Jaccard ≥ 0.5 **and** title similarity ≥ 0.4, within 168 h. If an excerpt is missing: title similarity ≥ 0.85 **and** same site **and** within 48 h |
+| `related_report` | A different article about the same event | Story rule below |
+| `primary` | First article of a new story | Nothing matched |
+
+**Story rule.** Within 96 h of the cluster's first report, with no veto against any member, the item must
+match the founding report or at least half of the cluster's distinct reports, where a match is:
+`0.40 × title-topic Jaccard + 0.35 × text-topic Jaccard + 0.25 × entity score ≥ 0.30` (+0.15 if no recognised
+entity is shared, +0.10 if either event type is unknown). "Topic" words exclude organisation names and event
+words, so "Company X launches A" and "Company X launches B" share nothing. The entity score is 1.0 for a
+shared model/product name, otherwise half the entity Jaccard. Without a shared entity the titles must share
+at least three topic words.
+
+**How false merges are prevented.** Vetoes are checked first and always win:
+
+- different known event types never merge (a launch, a pricing change and a safety report about the same
+  model stay three clusters). Types: launch, update, pricing, safety, research, funding, acquisition,
+  partnership, policy, legal, incident, people, from a title-weighted keyword lexicon;
+- the same product family with different versions never merges ("GPT-5" vs "GPT-5.1", "Llama 3" vs "Llama 4");
+  tiers (mini, pro) and parameter counts (405B) do not conflict;
+- titles that both name products but share no product family never merge ("GPT-7" vs "Sora 3");
+- near-duplicates also need equal title numbers ("raises $2B" vs "raises $5B");
+- title similarity alone is never enough across sites, a content hash needs a long enough excerpt, and an
+  organisation in common is weak evidence on its own;
+- clusters are compared through their founding report or a majority of members, so chains cannot drift;
+- no cluster is ever merged into another and no item is moved, so a decision Stage 3.3 has seen is stable.
+
+When unsure, the pipeline keeps stories apart: a missed merge shows as two clusters, a wrong merge would hide
+a story. All thresholds are settings (below). A semantic layer (embeddings) can be added later as one more
+signal in `matching.story_match` without changing the pipeline, the stored columns or the contract.
+
+### Similarity thresholds
+
+| Variable | Default | Used for |
+| --- | --- | --- |
+| `PROCESSING_NEAR_DUPLICATE_TEXT_THRESHOLD` | `0.5` | Excerpt shingle Jaccard for a near-duplicate |
+| `PROCESSING_NEAR_DUPLICATE_TITLE_THRESHOLD` | `0.4` | Title similarity required alongside it |
+| `PROCESSING_TITLE_ONLY_THRESHOLD` | `0.85` | Title similarity for a same-site near-duplicate without excerpts |
+| `PROCESSING_TITLE_ONLY_WINDOW_HOURS` | `48` | Window for that rule |
+| `PROCESSING_NEAR_DUPLICATE_WINDOW_HOURS` | `168` | Window for text near-duplicates |
+| `PROCESSING_STORY_THRESHOLD` | `0.3` | Story score |
+| `PROCESSING_STORY_WINDOW_HOURS` | `96` | Story window, from the cluster's first report |
+| `PROCESSING_MIN_BODY_TOKENS` | `15` | Excerpt words needed for content hashing and shingles |
+| `PROCESSING_MAX_ITEMS` | `5000` | Staged items loaded per run (newest first) |
+
+Raise a threshold to merge less. The values each run used are stored in its job row and in every cluster's
+`processing.thresholds`. A synthetic run of 2 000 unrelated items sharing ten organisations and five verbs
+produced no false merges and took about 7 s from cold.
+
+### Output contract for Stage 3.3
+
+`app.processing.service.list_story_clusters(settings, db, limit=100, updated_since=None)` returns
+`list[StoryCluster]` (Pydantic, frozen, `extra="forbid"`; JSON is camelCase). Re-analyse a cluster only when its
+`processing.revision` changes.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `contractVersion` | `"1.0"` | Bumped on breaking changes |
+| `clusterId` | UUID | Deterministic (UUIDv5 of the first item's dedup key), stable across runs |
+| `status` | `"ready"` | Deduplicated and clustered |
+| `title`, `description` | string, string \| null | The representative's title and excerpt. **Untrusted** |
+| `excerpt` | string \| null | Longest excerpt among non-duplicate sources. **Untrusted** |
+| `representative` | object | `itemId`, `title`, `originalUrl`, `canonicalUrl`, `publisher`, `site`, `publishedAt`, `selectionReasons`. Chosen for metadata quality (official channel, publisher, date, excerpt). **Not** a claim of being the original |
+| `originalSource` | null | Always null in Stage 3.2: who reported first is not verified |
+| `eventType` | enum \| null | Majority event type of the members |
+| `entities` | object | `organisations`, `products` (normalised, e.g. `gpt 5.1`), `benchmarks` |
+| `earliestPublishedAt`, `latestPublishedAt` | datetime \| null | Earliest/latest *known* publication date among sources |
+| `firstCollectedAt`, `lastCollectedAt` | datetime | |
+| `articleCount`, `duplicateCount`, `sourceCount`, `publisherCount` | int | Distinct URLs; exact + near duplicates + same-URL sightings; references; distinct publishers (or sites) |
+| `sources[]` | `SourceReference` | Every reference, see below |
+| `contentFlags` | string[] | `possible_prompt_injection`, `chat_template_tokens` from any source |
+| `contentIsUntrusted` | `true` | Always |
+| `processing` | object | `algorithmVersion`, `processedAt`, `revision`, `timeBasis`, `thresholds` |
+
+`SourceReference`: `itemId`, `ingestionDedupKey`, `sourceKey`, `sourceName`, `sourceType` (rss, gmail),
+`sourceKind` (official_channel, research_repository, government, news_outlet, newsletter, unknown: what the
+source is, from its configured category, not who broke the story), `feedIdentifier`, `title`, `excerpt`,
+`publisher`, `site`, `originalUrl`, `canonicalUrl`, `publishedAt`, `collectedAt`, `newsletterDate`, `relation`,
+`duplicateOf`, `matchScore`, `matchReasons`, `identifiers`, `contentFlags`, `metadata` (author, categories...).
+
+Rules for Stage 3.3: put source text into prompts only as quoted, delimited data, never as instructions; link
+readers to `originalUrl`; do not describe the representative or the earliest date as the original source.
+
+### Storage policy and database changes (migration 0003)
+
+No new table and no raw-news archive. Processing results are six columns on the temporary `ingestion_items`
+rows and are deleted with them by Stage 3.1's retention (default 14 days, purged at the start of each
+ingestion run). Clusters are assembled on read; a cluster ends when its last item expires. Published editions
+and stories are untouched (they live in `stories`, with their own source fields, and Stage 3.5/3.6 handle
+publishing and archive clean-up).
+
+| Change | Why |
+| --- | --- |
+| `ingestion_items.cluster_id` (indexed), `dedup_relation` (CHECK), `duplicate_of_id` (self FK, SET NULL), `content_hash` (indexed), `processed_at`, `processing` (JSONB: entities, event type, identifiers, scores, reasons; **no article text**) | Stable, idempotent decisions across runs without a second table |
+| CHECK: `processed` rows must have a cluster and relation | Stage 3.3 never sees a half-written decision |
+| `ingestion_jobs.job_type` accepts `story_processing` | Each run is one job row (counts, thresholds); the existing one-running-job-per-key index is the cross-process lock |
+
+Stage 3.1 change: `extra.also_seen` sightings (see the relation table). It needs no migration and Stage 3.1
+works the same with or without migration 0003. **Migration 0003 is not applied to the live database yet**;
+apply it with `alembic upgrade head` (or the Supabase connector) after review. Until then, processing reports
+"apply migration 0003" and exits with status 2.
+
+### Running processing
+
+```bash
+cd backend
+python -m scripts.process dry-run                       # live Stage 3.1 dry run → in-memory processing; no DB, nothing stored
+python -m scripts.process dry-run --source openai-news --json
+python -m scripts.process run                           # process staged items (DATABASE_URL + migration 0003)
+python -m scripts.process clusters --limit 20           # print current clusters; --json for the full contract
+python -m scripts.ingest schedule --process             # scheduled ingestion followed by processing
+```
+
+Over HTTP, when `INGESTION_ADMIN_TOKEN` is set (404 otherwise; same bearer token; not in the OpenAPI schema):
+
+```bash
+curl -X POST https://<api-host>/api/v1/admin/processing/runs -H "Authorization: Bearer $INGESTION_ADMIN_TOKEN"
+curl "https://<api-host>/api/v1/admin/processing/clusters?limit=20" -H "Authorization: Bearer $INGESTION_ADMIN_TOKEN"
+```
+
+### Security
+
+- All source content is untrusted. Chat-template tokens (`<|im_start|>`, `[INST]`, `<<SYS>>`) are removed,
+  instruction-like text is flagged (not acted on, not deleted) and the contract marks every text field untrusted.
+- URLs are re-validated with Stage 3.1's SSRF validator; nothing in Stage 3.2 fetches a URL.
+- Readable-text extraction is a parser, never a renderer: scripts, styles, iframes, forms and hidden elements
+  are dropped and the output is plain text.
+- No public endpoint exposes processing records; admin routes need the ≥ 32-character token.
+- Logs contain counts only: no titles, excerpts, URLs or credentials. `processing` stores no article text.
+
+### Limitations
+
+- Stage 3.1 stores excerpts of at most 600 characters and does not fetch articles, so text signals use
+  excerpts. `extract_readable_text` is ready for full pages if a later stage fetches them (through
+  `SafeHttpClient`).
+- The organisation gazetteer and the product/event lexicons are small and English-only. Unknown organisations
+  only weaken the signal (a stricter score is then required); add names in `features.py`.
+- An event described with words from two types (for example a launch announced together with new pricing)
+  gets one type, so a pure-pricing report of the same day may stay a separate cluster. That is deliberate.
+- Clusters are never merged after the fact, so two clusters created before a bridging report arrives stay two.
+- The thresholds were tuned on synthetic data, not on live feeds. Run `scripts.process dry-run` on real feeds
+  and adjust the settings if needed.
 
 ## Connecting the frontend
 
@@ -573,8 +790,9 @@ Consider `DOCS_ENABLED=false` in production if you do not want the schema public
 ## Phase boundaries
 
 Implemented: schema, migrations, public read API, keyword search, safe seed, tests, docs (Phase 2);
-RSS/Atom and Gmail (TLDR AI) ingestion into a temporary staging table, scheduling, admin trigger (Phase 3.1).
-Not implemented (Phase 3.2+): LLM summaries, ranking, fact verification and editorial workflow, edition
+RSS/Atom and Gmail (TLDR AI) ingestion into a temporary staging table, scheduling, admin trigger (Phase 3.1);
+normalisation, exact/near-duplicate detection, story clustering with provenance and the Stage 3.3 contract (Phase 3.2).
+Not implemented (Phase 3.3+): LLM summaries, ranking, fact verification and editorial workflow, edition
 generation, publishing (which will require authorised human approval), embeddings and semantic or
 conversational search, audio generation. `ingestion_jobs`, the
 `in_review`/`rejected` story states, `summary_origin`, `canonical_url` and the `mode` field of search

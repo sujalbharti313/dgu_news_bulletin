@@ -6,7 +6,13 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, Timestamps, UUIDPrimaryKey, enum_check, url_check
-from app.models.enums import IngestionItemStatus, IngestionJobStatus, IngestionJobType, IngestionSourceType
+from app.models.enums import (
+    DedupRelation,
+    IngestionItemStatus,
+    IngestionJobStatus,
+    IngestionJobType,
+    IngestionSourceType,
+)
 
 
 class IngestionJob(UUIDPrimaryKey, Timestamps, Base):
@@ -65,6 +71,11 @@ class IngestionItem(UUIDPrimaryKey, Timestamps, Base):
         CheckConstraint("excerpt IS NULL OR length(excerpt) <= 2000", name="excerpt_length"),
         CheckConstraint("expires_at > collected_at", name="expires_after_collection"),
         Index("ix_ingestion_items_status_collected", "processing_status", "collected_at"),
+        enum_check("dedup_relation", DedupRelation),
+        CheckConstraint(
+            "processing_status <> 'processed' OR (cluster_id IS NOT NULL AND dedup_relation IS NOT NULL)",
+            name="processed_has_cluster",
+        ),
     )
 
     job_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -88,4 +99,20 @@ class IngestionItem(UUIDPrimaryKey, Timestamps, Base):
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     # Small, bounded provider metadata (author, categories, read time, newsletter date). No content.
+    # `also_seen` lists other sources that carried the same canonical URL (Phase 3.2 provenance).
     extra: Mapped[dict | None] = mapped_column(JSONB)
+
+    # --- Phase 3.2 processing results (migration 0003). Written only by app/processing; they expire with
+    # the row. No Python-side defaults, so Stage 3.1 inserts never name these columns.
+    # sha256 of the normalised title + excerpt; set only when the excerpt is long enough to be distinctive.
+    content_hash: Mapped[str | None] = mapped_column(String(64), index=True)
+    # Story cluster this item belongs to (a deterministic UUID derived from the cluster's first item).
+    cluster_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
+    dedup_relation: Mapped[str | None] = mapped_column(String(24))
+    # For exact and near duplicates: the item this one duplicates.
+    duplicate_of_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ingestion_items.id", ondelete="SET NULL"), index=True
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Derived signals and the reasons for the decision (entities, event type, scores). No article text.
+    processing: Mapped[dict | None] = mapped_column(JSONB)

@@ -87,10 +87,13 @@ class CampusItemKind(StrEnum):
 
 
 class IngestionJobType(StrEnum):
-    """SOURCE_FETCH (RSS/Atom) and NEWSLETTER_IMPORT (Gmail) are used by Phase 3.1; the rest are reserved."""
+    """SOURCE_FETCH (RSS/Atom) and NEWSLETTER_IMPORT (Gmail) are used by Phase 3.1, STORY_PROCESSING by
+    Phase 3.2; the rest are reserved."""
 
     SOURCE_FETCH = "source_fetch"
     NEWSLETTER_IMPORT = "newsletter_import"
+    # Phase 3.2: one run of normalisation, deduplication and story clustering over staged items.
+    STORY_PROCESSING = "story_processing"
     SUMMARISATION = "summarisation"
     VERIFICATION = "verification"
 
@@ -118,3 +121,16 @@ class IngestionItemStatus(StrEnum):
     PROCESSED = "processed"
     DISCARDED = "discarded"
     FAILED = "failed"
+
+
+class DedupRelation(StrEnum):
+    """How a processed staged item relates to its story cluster (Phase 3.2)."""
+
+    # The first article of a story cluster.
+    PRIMARY = "primary"
+    # The same article: same arXiv id / DOI, or identical normalised title and excerpt under another URL.
+    EXACT_DUPLICATE = "exact_duplicate"
+    # A lightly modified copy of an article already in the cluster (syndication, edited headline).
+    NEAR_DUPLICATE = "near_duplicate"
+    # A different article reporting the same event.
+    RELATED_REPORT = "related_report"

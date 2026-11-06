@@ -127,13 +127,16 @@ class IngestionRunner:
                 "not_modified": int(result.not_modified),
             }
             if self.dry_run:
-                counts.update(inserted=0, duplicates=0, already_in_bulletin=0, would_stage=len(items))
+                counts.update(inserted=0, duplicates=0, already_in_bulletin=0, sightings=0, would_stage=len(items))
                 self.dry_run_items[source.key] = items
             else:
                 expires = self.clock() + timedelta(days=self.settings.ingestion_item_retention_days)
                 saved = self.store.save_items(items, job_id, expires)
                 counts.update(
-                    inserted=saved.inserted, duplicates=saved.duplicates, already_in_bulletin=saved.already_in_bulletin
+                    inserted=saved.inserted,
+                    duplicates=saved.duplicates,
+                    already_in_bulletin=saved.already_in_bulletin,
+                    sightings=saved.sightings,
                 )
                 self.store.finish_job(
                     job_id,

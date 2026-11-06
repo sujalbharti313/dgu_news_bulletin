@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic test feed for Stage 3.2. Fictional organisation, product and events on reserved example domains. -->
+<rss version="2.0">
+  <channel>
+    <title>Nimbus Labs Blog - RSS</title>
+    <link>https://nimbus.example.com/</link>
+    <description>Test fixture</description>
+    <item>
+      <title>Introducing Nimbus 2.5, our most capable model</title>
+      <link>https://nimbus.example.com/blog/nimbus-2-5?utm_source=rss</link>
+      <pubDate>Fri, 06 Nov 2026 08:00:00 GMT</pubDate>
+      <description><![CDATA[<p>Today we are releasing <b>Nimbus 2.5</b>, a new model with a 1M-token context window.
+      Nimbus 2.5 scores 71.2% on SWE-bench Verified and is available in the Nimbus API starting today.
+      Known limitation: "the model can still produce incorrect citations".</p>]]></description>
+    </item>
+    <item>
+      <title>Nimbus 2.5 safety report and system card</title>
+      <link>https://nimbus.example.com/blog/nimbus-2-5-system-card</link>
+      <pubDate>Fri, 06 Nov 2026 08:30:00 GMT</pubDate>
+      <description>The system card describes red teaming, safeguards and the safety evaluations run on Nimbus 2.5 before release.</description>
+    </item>
+  </channel>
+</rss>
