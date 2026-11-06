@@ -61,7 +61,7 @@ cp .env.example .env                 # then set DATABASE_URL (see below)
 ```
 
 `requirements.txt` is the fully pinned runtime lock (compiled from `requirements.in` with
-`uv pip compile`); `requirements-dev.txt` adds the test tools. To upgrade, edit the `.in` file and recompile.
+`uv pip compile --universal --python-version 3.12`, so Windows, macOS and Linux all install from it); `requirements-dev.txt` adds the test tools. To upgrade, edit the `.in` file and recompile.
 
 ## Environment variables
 
