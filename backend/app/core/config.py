@@ -92,6 +92,43 @@ class Settings(BaseSettings):
     # Upper bound on staged items loaded per processing run (newest first); keeps a run's cost bounded.
     processing_max_items: int = Field(default=5000, ge=10, le=50_000)
 
+    # --- Phase 3.3 AI intelligence engine. Server-side only; the API key never reaches the frontend. ---
+    # Provider implementation. Only "openai" (any OpenAI-compatible Chat Completions endpoint) exists today.
+    ai_provider: str = Field(default="openai", pattern=r"^[a-z0-9_-]{1,32}$")
+    # API key for the provider (OpenAI: platform.openai.com API key, billed separately from ChatGPT plans).
+    openai_api_key: SecretStr | None = None
+    ai_base_url: str = Field(default="https://api.openai.com/v1", min_length=8, max_length=300)
+    # Model for story analysis. Deliberately no default: choose one that supports JSON-schema structured output.
+    ai_model: str | None = Field(default=None, max_length=120)
+    # Optional cheaper model for repair attempts (fixing a response that failed validation). Unset = ai_model.
+    ai_repair_model: str | None = Field(default=None, max_length=120)
+    ai_max_output_tokens: int = Field(default=2500, ge=256, le=32_000)
+    # Unset = the provider default (some reasoning models reject a temperature).
+    ai_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    ai_request_timeout_seconds: float = Field(default=60.0, ge=5.0, le=600.0)
+    # Provider retries per request (timeouts, 429, 5xx), with exponential backoff and Retry-After.
+    ai_max_retries: int = Field(default=3, ge=0, le=8)
+    ai_max_retry_after_seconds: float = Field(default=60.0, ge=1.0, le=600.0)
+    # Extra calls allowed per story when the response fails schema or evidence validation.
+    ai_max_repair_attempts: int = Field(default=1, ge=0, le=3)
+    # Runs in which a failing story is retried before it waits for `--retry-failed`.
+    ai_max_attempts_per_story: int = Field(default=3, ge=1, le=20)
+    ai_retry_delay_minutes: int = Field(default=30, ge=0, le=10_080)
+    ai_max_concurrency: int = Field(default=2, ge=1, le=16)
+    # Cost controls: at most this many stories per run, and (when prices are set) this estimated spend.
+    ai_max_stories_per_run: int = Field(default=25, ge=1, le=1000)
+    ai_max_cost_per_run_usd: float | None = Field(default=None, gt=0, le=1000)
+    # Your model's prices in USD per million tokens (from the provider's pricing page). Optional; used for
+    # cost estimates and the per-run cap. Never guessed by the application.
+    ai_input_cost_per_million_tokens: float | None = Field(default=None, ge=0, le=10_000)
+    ai_output_cost_per_million_tokens: float | None = Field(default=None, ge=0, le=10_000)
+    # Clusters with fewer words of source text than this are flagged insufficient_evidence without a call.
+    ai_min_evidence_words: int = Field(default=25, ge=0, le=1000)
+    ai_max_project_ideas: int = Field(default=3, ge=0, le=3)
+    intelligence_categories_file: str = "config/intelligence_categories.toml"
+    # Intelligence rows are working data for review and later stages; each records when it expires.
+    intelligence_retention_days: int = Field(default=30, ge=1, le=365)
+
     # Gmail API (OAuth 2.0, gmail.readonly). All three must be set or Gmail sources are skipped.
     gmail_client_id: str | None = None
     gmail_client_secret: SecretStr | None = None
@@ -130,14 +167,14 @@ class Settings(BaseSettings):
         normalise_database_url(value.get_secret_value())  # raises ValueError on an unusable URL
         return value
 
-    @field_validator("ingestion_admin_token", "gmail_client_secret", "gmail_refresh_token")
+    @field_validator("ingestion_admin_token", "gmail_client_secret", "gmail_refresh_token", "openai_api_key")
     @classmethod
     def _blank_secret_is_unset(cls, value: SecretStr | None) -> SecretStr | None:
         if value is None or not value.get_secret_value().strip():
             return None
         return SecretStr(value.get_secret_value().strip())
 
-    @field_validator("gmail_client_id")
+    @field_validator("gmail_client_id", "ai_model", "ai_repair_model")
     @classmethod
     def _blank_is_unset(cls, value: str | None) -> str | None:
         return value.strip() if value and value.strip() else None
@@ -166,6 +203,15 @@ class Settings(BaseSettings):
         if self.database_url is None:
             return None
         return normalise_database_url(self.database_url.get_secret_value())
+
+    @field_validator("ai_base_url")
+    @classmethod
+    def _ai_base_url(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        local = value.startswith(("http://localhost", "http://127.0.0.1"))
+        if not (value.startswith("https://") or local):
+            raise ValueError("AI_BASE_URL must use https:// (plain http only for localhost).")
+        return value
 
     @property
     def gmail_configured(self) -> bool:

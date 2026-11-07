@@ -1,17 +1,18 @@
-# AI//CAMPUS backend (Phases 2, 3.1 and 3.2)
+# AI//CAMPUS backend (Phases 2, 3.1, 3.2 and 3.3)
 
 A public, read-only REST API for the AI//CAMPUS bulletin, backed by Supabase PostgreSQL, plus (Phase 3.1)
 automated news ingestion from RSS/Atom feeds and the TLDR AI newsletter via Gmail (Phase 3.1), and news
-processing, deduplication and story clustering (Phase 3.2). See [News ingestion](#news-ingestion-phase-31) and
-[News processing](#news-processing-and-deduplication-phase-32).
+processing, deduplication and story clustering (Phase 3.2), and an AI intelligence engine that analyses each
+story (Phase 3.3). See [News ingestion](#news-ingestion-phase-31),
+[News processing](#news-processing-and-deduplication-phase-32) and [AI intelligence](#ai-intelligence-engine-phase-33).
 FastAPI · Pydantic v2 · SQLAlchemy 2 · psycopg 3 · Alembic · httpx · feedparser · pytest.
 
 The backend is independent of the Next.js frontend: it lives in `backend/`, has its own dependencies,
 and deploys to any Python host. The frontend talks to it only through `NEXT_PUBLIC_API_BASE_URL`.
 
-> **Status of the live database:** the Supabase project has migrations `0001` and `0002` and the reference data.
-> Migration `0003` (Phase 3.2 processing columns) has been tested against a local PostgreSQL 16 only; apply it
-> with `alembic upgrade head` before running processing against Supabase.
+> **Status of the live database:** the Supabase project has migrations `0001` to `0003` and the reference data.
+> Migration `0004` (Phase 3.3 `story_intelligence` table) has been tested against a local PostgreSQL 16 only;
+> apply it with `alembic upgrade head` before running the intelligence engine against Supabase.
 
 ---
 
@@ -36,10 +37,11 @@ backend/
 │   ├── api/v1/               Versioned router and endpoint modules (admin_ingestion.py: token-protected)
 │   ├── ingestion/            Phase 3.1: sources, SSRF guard, HTTP client, providers, parsers, store, runner
 │   ├── processing/           Phase 3.2: normalisation, deduplication, story clusters, Stage 3.3 contract
+│   ├── intelligence/         Phase 3.3: AI provider, prompts, validation, engine, runner, Stage 3.4 contract
 │   └── seed/                 Seed runner + JSON fixtures exported from the frontend's data files
-├── config/                   ingestion_sources.toml (the feeds and newsletters to collect)
+├── config/                   ingestion_sources.toml (feeds and newsletters), intelligence_categories.toml
 ├── migrations/               Alembic environment and versioned migrations
-├── scripts/                  seed.py, ingest.py, process.py, gmail_oauth.py CLIs, export_frontend_fixtures.mjs
+├── scripts/                  seed.py, ingest.py, process.py, intelligence.py, gmail_oauth.py CLIs, export_frontend_fixtures.mjs
 ├── tests/                    pytest suite (API, constraints, migrations, contract, seed, config)
 ├── alembic.ini · pyproject.toml · requirements*.txt · Dockerfile · .env.example
 ```
@@ -745,6 +747,170 @@ curl "https://<api-host>/api/v1/admin/processing/clusters?limit=20" -H "Authoriz
 - The thresholds were tuned on synthetic data, not on live feeds. Run `scripts.process dry-run` on real feeds
   and adjust the settings if needed.
 
+## AI intelligence engine (Phase 3.3)
+
+Turns each Stage 3.2 story cluster into validated, evidence-aware intelligence for editors and Stage 3.4:
+a summary, a technical explanation, why it matters (confirmed vs. interpretation), student relevance, zero to
+three AI-suggested project ideas, a category, entities, technical details, and claim-level evidence and
+uncertainty metadata. **Analysis only:** nothing here ranks, verifies, builds editions, publishes or deletes.
+
+### Architecture
+
+```
+app/intelligence/
+├── categories.py   config/intelligence_categories.toml loader (validated; fingerprint is part of the engine key)
+├── draft.py        what the model must return (Pydantic) + the strict JSON Schema sent to the provider
+├── evidence.py     StoryCluster → evidence pack: source ids S1..Sn, copy groups, allowed numbers and URLs
+├── prompts.py      system prompt (all instructions) + delimited, JSON-encoded evidence block + repair prompt
+├── validation.py   schema + evidence checks → issues; review flags; assembly of the Stage 3.4 contract
+├── providers/      base.py (interface, errors, usage) · openai.py (Chat Completions, strict JSON schema, httpx)
+├── engine.py       one cluster: evidence → call (bounded retries, Retry-After) → validate → bounded repair
+├── runner.py       one run: lock, choose clusters that need work, bounded concurrency, save per story, report
+├── store.py        story_intelligence persistence (SQL + in-memory) and the run lock
+├── contract.py     StoryIntelligence: the Stage 3.3 → 3.4 interface
+└── service.py      list_story_intelligence() for Stage 3.4, run_intelligence()
+```
+
+Flow per run: `list_story_clusters` (Stage 3.2, read-only) → for each cluster whose revision, or the engine key,
+changed (or whose failed attempt is due for a retry) → evidence pack → too little text? record
+`insufficient_evidence`, **no call** → one structured-output call → validation → if invalid, one repair call
+(optionally on a smaller `AI_REPAIR_MODEL`) → save the row → next. One call per story covers every field,
+including classification, so no separate classification call is made.
+
+### Provider and configuration
+
+`AI_PROVIDER=openai` is the only implementation today. It calls `POST {AI_BASE_URL}/chat/completions` with
+`response_format: json_schema, strict: true` over the existing `httpx` (no SDK dependency), so any
+OpenAI-compatible endpoint works by changing `AI_BASE_URL`. A new provider implements `generate()` and
+`aclose()` from `providers/base.py` and is registered in `providers/__init__.py`.
+
+**An OpenAI API key is billed per token on platform.openai.com, separately from any ChatGPT subscription.**
+Keep the key in `backend/.env` or host secrets; it is only ever sent in the Authorization header and never logged.
+`AI_MODEL` has no default: pick a model that supports JSON-schema structured output.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | — | Required to run. Server-side only |
+| `AI_MODEL` | — | Required. Model for analysis |
+| `AI_REPAIR_MODEL` | `AI_MODEL` | Optional cheaper model for repair (re-formatting) attempts |
+| `AI_PROVIDER` / `AI_BASE_URL` | `openai` / `https://api.openai.com/v1` | https only (http only for localhost) |
+| `AI_MAX_OUTPUT_TOKENS` | 2500 | Per call |
+| `AI_TEMPERATURE` | unset | Unset = provider default |
+| `AI_REQUEST_TIMEOUT_SECONDS` | 60 | Per request |
+| `AI_MAX_RETRIES` / `AI_MAX_RETRY_AFTER_SECONDS` | 3 / 60 | Retries for timeouts, 429, 5xx; exponential backoff, `Retry-After` honoured (capped) |
+| `AI_MAX_REPAIR_ATTEMPTS` | 1 | Extra calls when a response fails validation |
+| `AI_MAX_ATTEMPTS_PER_STORY` / `AI_RETRY_DELAY_MINUTES` | 3 / 30 | A failing story is retried in later runs, delay × attempt, until the cap (then only with `--retry-failed`) |
+| `AI_MAX_CONCURRENCY` | 2 | Parallel calls; a 429 pauses all of them |
+| `AI_MAX_STORIES_PER_RUN` | 25 | Hard cap on stories analysed per run |
+| `AI_INPUT_COST_PER_MILLION_TOKENS` / `AI_OUTPUT_COST_PER_MILLION_TOKENS` | unset | Your model's prices; enable cost estimates. Never guessed |
+| `AI_MAX_COST_PER_RUN_USD` | unset | Stop starting new stories once the estimate reaches this |
+| `AI_MIN_EVIDENCE_WORDS` | 25 | Fewer distinct words of source text → `insufficient_evidence`, no call |
+| `AI_MAX_PROJECT_IDEAS` | 3 | 0 to 3 |
+| `INTELLIGENCE_CATEGORIES_FILE` | `config/intelligence_categories.toml` | Categories (primary + up to `max_secondary`) |
+| `INTELLIGENCE_RETENTION_DAYS` | 30 | Sets `expires_at` on every row |
+
+Token usage is recorded per story (row columns) and per run (job `details.usage`). Every story also emits an
+`ai usage` log record and calls the runner's optional `usage_hook(event)` (cluster id, model, calls, tokens,
+estimated cost), the hook for external cost monitoring. A failing hook never breaks a run.
+
+### Output schema (the Stage 3.4 contract)
+
+`app.intelligence.service.list_story_intelligence(settings, db, statuses=None, limit=100, updated_since=None)`
+returns `list[StoryIntelligence]` (frozen Pydantic, `extra="forbid"`, camelCase JSON), statuses `analysed` and
+`needs_review` by default.
+
+| Field | Notes |
+| --- | --- |
+| `contractVersion` `"1.0"`, `clusterId`, `clusterRevision`, `clusterContractVersion` | Preserved from Stage 3.2 |
+| `status` | `analysed`, or `needs_review` when a blocking flag is present |
+| `reviewFlags` | Blocking: `insufficient_evidence`, `source_content_flagged`, `model_reported_injection`, `instruction_like_text_in_output`. Informational: `partial_evidence`, `single_report`, `warning_length` |
+| `headline`, `summary` (60–100 words), `technicalExplanation` | AI-generated. `summary`/`technicalExplanation` are null when evidence is insufficient |
+| `whyItMatters` | `confirmedImpact` (what sources state) and `interpretation` (AI view), kept apart |
+| `studentRelevance` | `summary` + `angles[]` (`learning`, `research`, `internships`, `career_skills`, `practical_applications`) |
+| `projectIdeas[]` | 0–3; each `kind: "ai_generated_suggestion"`, `title`, `description`, `technicalDirection`, `difficulty` |
+| `classification` | `primary`, `primaryLabel`, `secondary[]`, `topic` (frontend topic), `rationale` |
+| `entities` | `organisations`, `people`, `products`, `technologies`, `benchmarks` |
+| `technicalDetails[]` | `label`, `detail`, `sourceIds` (must exist) |
+| `evidence` | `sufficiency`, `claims[]` (`statement`, `basis`: `stated_in_sources` \| `inferred`, `sourceIds`, `attributedTo`, `corroboration`, `independentPublishers`, `citesOfficialSource`, `verification: "not_independently_verified"`), `missingInformation`, `uncertainties`, story-level `corroboration` |
+| `sources[]` | Stage 3.2 references copied **by code** (never by the model): `refId` S1.., `itemId`, `sourceKey`, `sourceKind`, `relation`, `duplicateOf`, `title`, `publisher`, `site`, `originalUrl`, `canonicalUrl`, `publishedAt`, `newsletterDate`, `contentFlags`. No excerpts |
+| `generation` | `aiGenerated: true`, `provider`, `model`, `engineKey`, `generatedAt`, `calls`, tokens, `estimatedCostUsd` |
+| `contentIsAiGenerated` | Always `true`: everything must be reviewed before publication |
+
+### Prompt safety and evidence handling
+
+- **Instructions and data are separated.** All rules live in the system message. Source text appears only in the
+  user message as a JSON document between `<<EVIDENCE x>>` / `<<END EVIDENCE x>>` markers with a random
+  per-request boundary that is guaranteed not to occur in the data; Stage 3.2's `contentFlags` are passed along
+  so the model knows the text looks hostile. The system prompt tells the model to ignore any instruction inside
+  the evidence and report it.
+- **The schema cannot be overridden.** Strict JSON-schema mode with category enums, then our own Pydantic and
+  evidence validation. Source text cannot change categories, fields, URLs or application behaviour.
+- **No invented facts that code can detect:** unknown source ids, uncited stated claims, any URL that is not a
+  source's own URL, and any number (statistics, dates, benchmark scores, prices) in a factual field that does not
+  appear in the evidence are validation errors → one repair attempt → `invalid_output` (nothing stored, retried
+  later). Interpretation and project ideas are not number-checked; they are labelled as AI views.
+- **Corroboration is computed, not claimed.** Exact/near duplicates and same-URL sightings are grouped with the
+  article they copy, so syndication counts once. Claims report `single_report` or `multiple_independent_reports`
+  and always `not_independently_verified`; verification is Stage 3.4's job.
+- **Missing evidence is explicit:** thin clusters are never sent; the model can return `insufficient` with null
+  fields; `missingInformation` and `uncertainties` record gaps. Flagged source content always needs review.
+- Logs carry ids, codes and counts only, never prompts, source text or keys.
+
+### Database changes (migration 0004)
+
+One new table, `story_intelligence`, because Stage 3.2 clusters are built on read and expire with their staged
+items (14 days), while analyses must survive for review, retries and Stage 3.4, and must record per-story
+status, attempts and cost. Reusing `ingestion_items` would tie an analysis to one member row of a cluster.
+
+| Column(s) | Why |
+| --- | --- |
+| `cluster_id` (unique), `cluster_revision`, `engine_key` | Idempotency: re-analyse only on a real change |
+| `status` (CHECK), `attempt_count`, `last_attempt_at`, `next_attempt_at`, `analysed_at` | Per-story status and safe retries |
+| `provider`, `model`, `input_tokens`, `output_tokens`, `estimated_cost_usd` | Usage and cost tracking |
+| `intelligence` (JSONB, the contract; CHECK: present exactly for `analysed`/`needs_review`), `errors` (codes only), `review_flags` | Output for review and Stage 3.4; no article excerpts |
+| `job_id` → `ingestion_jobs` (SET NULL), `expires_at` (indexed) | Run linkage; this is working data, not an archive |
+
+Also an `updated_at` trigger and RLS with no policies, like every table. Runs reuse `ingestion_jobs` with the
+already-allowed job type `summarisation` (key `stage-3.3-intelligence`) as the cross-process lock. No existing
+table or constraint changes. Expired rows are not deleted in this stage (clean-up is Stage 3.6); readers ignore
+them. Published stories and editions are never touched.
+
+Apply on the live database (after review): `cd backend && alembic upgrade head`. Until then the engine reports
+"apply migration 0004" and exits with status 2.
+
+### Running the engine
+
+```bash
+cd backend
+python -m scripts.intelligence check                 # configuration + categories; no calls, no DB
+python -m scripts.intelligence dry-run --limit 2     # real calls on current clusters, nothing stored
+python -m scripts.intelligence run                   # analyse clusters that need it (DB + migration 0004)
+python -m scripts.intelligence run --retry-failed    # also retry failed / invalid stories now
+python -m scripts.intelligence records               # per-story status, attempts, tokens, errors
+python -m scripts.intelligence list --json           # stored intelligence (the Stage 3.4 contract)
+```
+
+Over HTTP, when `INGESTION_ADMIN_TOKEN` is set (404 otherwise; not in the OpenAPI schema):
+`POST /api/v1/admin/intelligence/runs[?retryFailed=true]`, `GET /api/v1/admin/intelligence/stories`,
+`GET /api/v1/admin/intelligence/records`. A run can take minutes; prefer the CLI for scheduled work.
+
+### Tests
+
+`pytest tests/test_intelligence_*.py` (provider, validation, engine, runner, store, admin). Every AI response is
+mocked (a scripted fake provider, and `httpx.MockTransport` for the OpenAI client), so no key or network is
+needed. The store and end-to-end Stage 3.1 → 3.2 → 3.3 tests need `TEST_DATABASE_URL`.
+
+### Limitations
+
+- The evidence is what Stage 3.1 stores: titles and excerpts (at most 600 characters), not full articles, so many
+  analyses will honestly be `partial`.
+- The number and URL checks catch invented figures and links, not every unsupported sentence. Wording-level
+  faithfulness is for Stage 3.4 verification and human review.
+- Cost estimates use the prices you configure; with none set, only tokens are tracked.
+- Prompts were tested with mocked responses only. Run `scripts.intelligence dry-run --limit 2` with your key and
+  model before the first real run.
+- Expired `story_intelligence` rows stay until Stage 3.6 adds clean-up.
+
 ## Connecting the frontend
 
 1. Run the API (`uvicorn app.main:app --port 8000`) with `CORS_ORIGINS` including the frontend origin.
@@ -791,8 +957,9 @@ Consider `DOCS_ENABLED=false` in production if you do not want the schema public
 
 Implemented: schema, migrations, public read API, keyword search, safe seed, tests, docs (Phase 2);
 RSS/Atom and Gmail (TLDR AI) ingestion into a temporary staging table, scheduling, admin trigger (Phase 3.1);
-normalisation, exact/near-duplicate detection, story clustering with provenance and the Stage 3.3 contract (Phase 3.2).
-Not implemented (Phase 3.3+): LLM summaries, ranking, fact verification and editorial workflow, edition
+normalisation, exact/near-duplicate detection, story clustering with provenance and the Stage 3.3 contract (Phase 3.2);
+AI story intelligence with schema and evidence validation and the Stage 3.4 contract (Phase 3.3).
+Not implemented (Phase 3.4+): ranking, fact verification and editorial workflow, edition
 generation, publishing (which will require authorised human approval), embeddings and semantic or
 conversational search, audio generation. `ingestion_jobs`, the
 `in_review`/`rejected` story states, `summary_origin`, `canonical_url` and the `mode` field of search

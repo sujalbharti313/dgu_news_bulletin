@@ -88,7 +88,7 @@ class CampusItemKind(StrEnum):
 
 class IngestionJobType(StrEnum):
     """SOURCE_FETCH (RSS/Atom) and NEWSLETTER_IMPORT (Gmail) are used by Phase 3.1, STORY_PROCESSING by
-    Phase 3.2; the rest are reserved."""
+    Phase 3.2, SUMMARISATION by Phase 3.3 (one AI intelligence run); VERIFICATION is reserved."""
 
     SOURCE_FETCH = "source_fetch"
     NEWSLETTER_IMPORT = "newsletter_import"
@@ -134,3 +134,18 @@ class DedupRelation(StrEnum):
     NEAR_DUPLICATE = "near_duplicate"
     # A different article reporting the same event.
     RELATED_REPORT = "related_report"
+
+
+class IntelligenceStatus(StrEnum):
+    """Per-story state of the Phase 3.3 AI intelligence engine (one row per story cluster)."""
+
+    # Valid, schema-checked analysis with no blocking review flag. Stage 3.4 may use it.
+    ANALYSED = "analysed"
+    # Valid analysis that a human must look at first (flagged source content, thin evidence, warnings).
+    NEEDS_REVIEW = "needs_review"
+    # Not sent to the model: the cluster has too little source text to analyse responsibly.
+    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+    # The model's output still failed validation after the repair attempts. Nothing is stored; retried later.
+    INVALID_OUTPUT = "invalid_output"
+    # Provider error (timeout, rate limit, outage). Nothing is stored; retried later.
+    FAILED = "failed"

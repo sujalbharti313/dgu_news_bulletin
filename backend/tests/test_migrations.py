@@ -41,5 +41,5 @@ def test_upgrade_downgrade_upgrade_and_no_drift(scratch_url):
     with eng.connect() as conn:
         diff = compare_metadata(MigrationContext.configure(conn, opts={"compare_type": True}), Base.metadata)
         assert diff == [], diff
-        assert conn.scalar(text("SELECT version_num FROM alembic_version")) == "0003"
+        assert conn.scalar(text("SELECT version_num FROM alembic_version")) == "0004"
     eng.dispose()
