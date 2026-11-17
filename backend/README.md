@@ -1,17 +1,19 @@
-# AI//CAMPUS backend (Phases 2, 3.1 and 3.2)
+# AI//CAMPUS backend (Phases 2, 3.1, 3.2 and 3.3)
 
 A public, read-only REST API for the AI//CAMPUS bulletin, backed by Supabase PostgreSQL, plus (Phase 3.1)
 automated news ingestion from RSS/Atom feeds and the TLDR AI newsletter via Gmail (Phase 3.1), and news
-processing, deduplication and story clustering (Phase 3.2). See [News ingestion](#news-ingestion-phase-31) and
-[News processing](#news-processing-and-deduplication-phase-32).
-FastAPI · Pydantic v2 · SQLAlchemy 2 · psycopg 3 · Alembic · httpx · feedparser · pytest.
+processing, deduplication and story clustering (Phase 3.2), and AI analysis of each story with Google Gemini
+(Phase 3.3). See [News ingestion](#news-ingestion-phase-31),
+[News processing](#news-processing-and-deduplication-phase-32) and
+[AI intelligence engine](#ai-intelligence-engine-phase-33).
+FastAPI · Pydantic v2 · SQLAlchemy 2 · psycopg 3 · Alembic · httpx · feedparser · google-genai · pytest.
 
 The backend is independent of the Next.js frontend: it lives in `backend/`, has its own dependencies,
 and deploys to any Python host. The frontend talks to it only through `NEXT_PUBLIC_API_BASE_URL`.
 
-> **Status of the live database:** the Supabase project has migrations `0001` and `0002` and the reference data.
-> Migration `0003` (Phase 3.2 processing columns) has been tested against a local PostgreSQL 16 only; apply it
-> with `alembic upgrade head` before running processing against Supabase.
+> **Status of the live database:** the Supabase project has migrations up to `0003` and the reference data.
+> Migrations `0004` (no-op placeholder) and `0005` (Phase 3.3 tables) have been tested against a local
+> PostgreSQL 16 only; apply them with `alembic upgrade head` before running the intelligence engine.
 
 ---
 
@@ -36,10 +38,11 @@ backend/
 │   ├── api/v1/               Versioned router and endpoint modules (admin_ingestion.py: token-protected)
 │   ├── ingestion/            Phase 3.1: sources, SSRF guard, HTTP client, providers, parsers, store, runner
 │   ├── processing/           Phase 3.2: normalisation, deduplication, story clusters, Stage 3.3 contract
+│   ├── intelligence/         Phase 3.3: Gemini analysis, validation, priority, free-tier quota, Stage 3.4 contract
 │   └── seed/                 Seed runner + JSON fixtures exported from the frontend's data files
-├── config/                   ingestion_sources.toml (the feeds and newsletters to collect)
+├── config/                   ingestion_sources.toml (feeds, newsletters), intelligence_categories.toml
 ├── migrations/               Alembic environment and versioned migrations
-├── scripts/                  seed.py, ingest.py, process.py, gmail_oauth.py CLIs, export_frontend_fixtures.mjs
+├── scripts/                  seed.py, ingest.py, process.py, intelligence.py, gmail_oauth.py, export_frontend_fixtures.mjs
 ├── tests/                    pytest suite (API, constraints, migrations, contract, seed, config)
 ├── alembic.ini · pyproject.toml · requirements*.txt · Dockerfile · .env.example
 ```
@@ -745,6 +748,138 @@ curl "https://<api-host>/api/v1/admin/processing/clusters?limit=20" -H "Authoriz
 - The thresholds were tuned on synthetic data, not on live feeds. Run `scripts.process dry-run` on real feeds
   and adjust the settings if needed.
 
+## AI intelligence engine (Phase 3.3)
+
+Turns each Stage 3.2 story cluster into a validated, student-friendly analysis for an editor: what happened, a
+60–100 word summary, the technical explanation (or an explicit "insufficient evidence"), why it matters (facts
+kept apart from interpretation), student relevance, 0–3 AI-generated project ideas, one primary and optional
+secondary categories, and a **preliminary** priority score. It uses the Google Gemini API free tier through
+Google's official SDK (`google-genai`), model `gemini-3.5-flash-lite`. Nothing is verified, ranked, selected or
+published here: that is Stage 3.4 onward.
+
+### Architecture
+
+```
+Stage 3.2 clusters (service.list_story_clusters, read-only)
+  ──► runner.py   lock · skip up-to-date clusters · bounded concurrency · save each story as it finishes
+  ──► engine.py   evidence.py (sources S1..Sn, copies grouped, input budget) ──► prompts.py (rules in the system
+                  instruction; source text only as delimited JSON data) ──► quota.py (daily ledger, pacing)
+                  ──► providers/gemini.py (structured JSON output) ──► validation.py ──► one repair if invalid
+  ──► priority.py  weighted score + evidence caps ──► contract.py StoryAnalysis ──► story_analyses
+```
+
+| Module | Role |
+| --- | --- |
+| `app/intelligence/draft.py` | The JSON the model must return, and the strict schema sent to Gemini |
+| `app/intelligence/contract.py` | The Stage 3.4 input (`StoryAnalysis`) |
+| `app/intelligence/validation.py` | Rejects malformed JSON, unknown source ids, invented numbers or URLs, hype, wrong categories |
+| `app/intelligence/priority.py` | Weights, levels and caps for the preliminary score |
+| `app/intelligence/quota.py` | `ai_usage_daily` ledger, requests-per-minute pacing, shared rate-limit pause |
+| `app/intelligence/providers/gemini.py` | The only provider. No fallback model, no tools, SDK retries off |
+| `config/intelligence_categories.toml` | The nine categories (keys, labels, descriptions) |
+| `scripts/intelligence.py`, `api/v1/endpoints/admin_intelligence.py` | CLI and token-protected admin endpoints |
+
+### Gemini API setup (free)
+
+1. Open <https://aistudio.google.com/apikey>, sign in with a Google account and **Create API key** (no card).
+   Do not enable billing on that project: then a used-up quota simply stops the run.
+2. Put the key in `backend/.env` (never in the frontend, never in chat): `GEMINI_API_KEY=...`
+3. In AI Studio → **Usage and limits**, note the free limits for `gemini-3.5-flash-lite` and set
+   `AI_REQUESTS_PER_MINUTE` / `AI_REQUESTS_PER_DAY` at or below them (defaults: 10 per minute, 200 per day).
+   Google sets and can change these limits; nothing here promises unlimited free use.
+4. `python -m scripts.intelligence check --ping` confirms the key works and the model id exists (a metadata call
+   that uses no generation quota).
+
+Free-tier note: Google may use free-tier prompts to improve its products. Only public news text is sent.
+
+### Running
+
+```bash
+alembic upgrade head                                   # migrations 0004 (no-op) and 0005
+python -m scripts.intelligence check --ping
+python -m scripts.intelligence dry-run --limit 2       # real calls on current clusters, analyses not stored
+python -m scripts.intelligence run                     # analyse what needs it, store results
+python -m scripts.intelligence list --limit 10         # what Stage 3.4 will read
+python -m scripts.intelligence records                 # status, attempts, errors per story
+python -m scripts.intelligence usage                   # today's usage against the limits
+```
+
+Typical weekly order: `scripts.ingest run` → `scripts.process run` → `scripts.intelligence run`.
+Admin endpoints (only when `INGESTION_ADMIN_TOKEN` is set, bearer token, not in OpenAPI):
+`POST /api/v1/admin/intelligence/runs`, `GET .../analyses`, `GET .../records`, `GET .../usage`.
+
+### Free-tier controls
+
+| Control | Setting | Behaviour |
+| --- | --- | --- |
+| Requests per minute | `AI_REQUESTS_PER_MINUTE` | Request starts are spaced across all workers (retries and repairs included) |
+| Requests / tokens per day | `AI_REQUESTS_PER_DAY`, `AI_TOKENS_PER_DAY` | Counted in `ai_usage_daily` per Pacific-time day, reserved atomically before each request |
+| Google's daily quota (429) | — | Run stops at once, remaining stories → `quota_limited`, admin alert, no request until the reset |
+| Per-minute 429, timeouts, 5xx | `AI_MAX_RETRIES`, `AI_MAX_RETRY_AFTER_SECONDS` | Exponential backoff with jitter; honours Google's retry delay; all workers pause together |
+| Request timeout | `AI_REQUEST_TIMEOUT_SECONDS` | SDK timeout plus a hard asyncio timeout |
+| Token limits | `AI_MAX_INPUT_TOKENS`, `AI_MAX_OUTPUT_TOKENS`, `AI_MAX_SOURCES_PER_STORY` | Copies dropped first, excerpts shortened until the prompt fits |
+| Duplicate requests | — | One row per cluster; re-sent only if its revision or the engine key changes, or a failure is retried |
+| Run size | `AI_MAX_STORIES_PER_RUN`, `AI_MAX_CONCURRENCY` | The rest waits for the next run |
+| Paid fallback | — | None. No paid provider, no other model, no search grounding or tools |
+
+`quota_limited` stories are not counted as attempts and resume automatically on the first run after the reset
+(midnight Pacific time). The project has no e-mail or chat notifier yet, so the admin alert is an `ERROR` log
+line with a structured `admin_alert` field, plus `alerts` on the run report and on the `ingestion_jobs` row.
+
+### Accuracy and prompt-injection rules
+
+- Source text goes into the prompt only as JSON data inside a block with a random per-request boundary; all rules
+  are in the system instruction. Instructions found in sources are ignored and noted in `evidence_notes`.
+- The model cites sources as `S1, S2, ...` and never writes URLs, publishers or dates: code copies them from
+  Stage 3.2, so original links and provenance cannot be replaced.
+- Code rejects: malformed JSON, missing or extra fields, unknown source ids, numbers in factual fields that do
+  not appear in the evidence, any URL, unknown categories, hype words, wrong summary length, a technical
+  explanation without evidence. One repair request lists the problems; a second failure is `invalid_output`.
+- Duplicates and syndicated copies never count as independent confirmation; nothing is marked verified.
+
+### Preliminary priority
+
+The model scores five dimensions 0–100; code computes the rest:
+
+| Dimension | Weight |
+| --- | ---: |
+| Global or industry impact | 25% |
+| Technical significance or novelty | 25% |
+| Relevance to university students | 20% |
+| Timeliness | 15% |
+| Research or practical importance | 15% |
+
+Levels: Critical ≥ 85, High ≥ 70, Medium ≥ 45, Low < 45. Caps (recorded in `adjustments`): insufficient evidence
+≤ 44, mostly promotional ≤ 69, partial evidence or a single non-official report ≤ 84. Stage 3.4 makes the
+final ranking.
+
+### Statuses
+
+`completed` (usable) · `needs_review` (usable after a human checks `review_flags`, for example instruction-like
+source text) · `insufficient_evidence` (too thin; not sent, or the model said so: low priority, missing facts
+listed) · `invalid_output` and `failed` (retried later with backoff, at most `AI_MAX_ATTEMPTS_PER_STORY`) ·
+`quota_limited` (waits for the quota reset).
+
+### Database changes (migrations 0004 and 0005)
+
+| Change | Why |
+| --- | --- |
+| `0004`: no-op placeholder | An earlier, rolled-back Phase 3.3 used revision 0004. With the placeholder, databases at 0003 and at the old 0004 both upgrade cleanly |
+| `story_analyses` (one row per cluster) | Status, attempts, model id, category, priority score and level, tokens, the validated analysis JSON (no article excerpts), errors, review flags, `expires_at` |
+| `ai_usage_daily` | Requests, tokens, 429s and quota exhaustion per model per quota day. Counts only |
+| RLS on, no policies; `updated_at` triggers | Same as every other table: only the backend's database role can read or write |
+
+If the old `story_intelligence` table still exists, 0005 leaves it alone; drop it with
+`migrations/rollback/0004_drop_story_intelligence.sql` (safe before or after 0005).
+
+### Limitations
+
+- Tests use a scripted fake Gemini, so they check the engine's handling of responses, not a live model's writing.
+- Gemini's structured-output support for every JSON Schema keyword is decided by Google; a schema rejection shows
+  up as `bad_request` on the first live run.
+- Number checks are textual: a number that is in the evidence but used in the wrong context is not caught.
+- `expires_at` is recorded but rows are not purged automatically (cleanup belongs to a later stage).
+
 ## Connecting the frontend
 
 1. Run the API (`uvicorn app.main:app --port 8000`) with `CORS_ORIGINS` including the frontend origin.
@@ -791,8 +926,9 @@ Consider `DOCS_ENABLED=false` in production if you do not want the schema public
 
 Implemented: schema, migrations, public read API, keyword search, safe seed, tests, docs (Phase 2);
 RSS/Atom and Gmail (TLDR AI) ingestion into a temporary staging table, scheduling, admin trigger (Phase 3.1);
-normalisation, exact/near-duplicate detection, story clustering with provenance and the Stage 3.3 contract (Phase 3.2).
-Not implemented (Phase 3.3+): LLM summaries, ranking, fact verification and editorial workflow, edition
+normalisation, exact/near-duplicate detection, story clustering with provenance and the Stage 3.3 contract (Phase 3.2);
+Gemini analysis, summaries, explanations, categories and preliminary priority with free-tier controls (Phase 3.3).
+Not implemented (Phase 3.4+): credibility verification, final ranking and weekly selection, editorial workflow, edition
 generation, publishing (which will require authorised human approval), embeddings and semantic or
 conversational search, audio generation. `ingestion_jobs`, the
 `in_review`/`rejected` story states, `summary_origin`, `canonical_url` and the `mode` field of search

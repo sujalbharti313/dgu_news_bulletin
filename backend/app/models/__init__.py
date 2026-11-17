@@ -3,6 +3,7 @@
 from app.models.briefing import Briefing
 from app.models.edition import Edition
 from app.models.ingestion import IngestionItem, IngestionJob
+from app.models.intelligence import AiUsageDaily, StoryAnalysisRecord
 from app.models.reference import CampusItem, CareerSignal, IndiaEntry
 from app.models.research import ResearchPaper
 from app.models.source import Source
@@ -10,6 +11,7 @@ from app.models.story import Story
 from app.models.tool import Tool
 
 __all__ = [
+    "AiUsageDaily",
     "Briefing",
     "CampusItem",
     "CareerSignal",
@@ -20,5 +22,6 @@ __all__ = [
     "ResearchPaper",
     "Source",
     "Story",
+    "StoryAnalysisRecord",
     "Tool",
 ]
