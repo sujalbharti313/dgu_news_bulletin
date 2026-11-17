@@ -64,8 +64,10 @@ def clusters(items=None):
 def ai_settings(**overrides):
     values = {
         "database_url": None,
+        "ai_provider": "openai",
         "ai_model": "test-model",
         "openai_api_key": "sk-test-not-a-real-key",
+        "ai_requests_per_minute": 0,
         "ai_max_retries": 2,
         "ai_retry_delay_minutes": 30,
     }

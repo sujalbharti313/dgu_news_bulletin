@@ -11,6 +11,12 @@ from sqlalchemy.engine import URL, make_url
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 # Supabase's shared pooler (Supavisor) in transaction mode listens on 6543.
 TRANSACTION_POOLER_PORT = 6543
+# AI provider endpoints and default models, used when AI_BASE_URL / AI_MODEL are not set.
+DEFAULT_AI_BASE_URLS = {
+    "gemini": "https://generativelanguage.googleapis.com/v1beta",
+    "openai": "https://api.openai.com/v1",
+}
+DEFAULT_AI_MODELS = {"gemini": "gemini-2.5-flash-lite"}
 
 
 class Environment(StrEnum):
@@ -93,15 +99,29 @@ class Settings(BaseSettings):
     processing_max_items: int = Field(default=5000, ge=10, le=50_000)
 
     # --- Phase 3.3 AI intelligence engine. Server-side only; the API key never reaches the frontend. ---
-    # Provider implementation. Only "openai" (any OpenAI-compatible Chat Completions endpoint) exists today.
-    ai_provider: str = Field(default="openai", pattern=r"^[a-z0-9_-]{1,32}$")
-    # API key for the provider (OpenAI: platform.openai.com API key, billed separately from ChatGPT plans).
+    # Provider implementation: "gemini" (Google Gemini API, free tier via Google AI Studio; the default) or
+    # "openai" (OpenAI or any OpenAI-compatible Chat Completions endpoint, e.g. a local Ollama).
+    ai_provider: str = Field(default="gemini", pattern=r"^[a-z0-9_-]{1,32}$")
+    # Gemini API key from https://aistudio.google.com/apikey (free, no card needed).
+    gemini_api_key: SecretStr | None = None
+    # API key for AI_PROVIDER=openai (OpenAI: platform.openai.com API key, billed separately from ChatGPT plans).
     openai_api_key: SecretStr | None = None
-    ai_base_url: str = Field(default="https://api.openai.com/v1", min_length=8, max_length=300)
-    # Model for story analysis. Deliberately no default: choose one that supports JSON-schema structured output.
+    # Unset = the provider's own endpoint (see DEFAULT_AI_BASE_URLS).
+    ai_base_url: str | None = Field(default=None, min_length=8, max_length=300)
+    # Model for story analysis. Gemini defaults to gemini-2.5-flash-lite; for "openai" there is deliberately
+    # no default: choose one that supports JSON-schema structured output.
     ai_model: str | None = Field(default=None, max_length=120)
     # Optional cheaper model for repair attempts (fixing a response that failed validation). Unset = ai_model.
     ai_repair_model: str | None = Field(default=None, max_length=120)
+    # Optional model to switch to for the rest of a run when the main model's rate limit or daily quota is
+    # used up (free-tier quotas are per model), e.g. gemini-2.5-flash.
+    ai_fallback_model: str | None = Field(default=None, max_length=120)
+    # Client-side pacing: at most this many requests start per minute, across all workers (retries and
+    # repairs included). Keeps a run under the provider's free-tier limit instead of hitting 429s. 0 = off.
+    ai_requests_per_minute: int = Field(default=10, ge=0, le=10_000)
+    # Gemini 2.5 only: thinking token budget. 0 = thinking off (fast, and fine for Flash and Flash-Lite);
+    # -1 = the model decides. Unset = the model's default (2.5 Pro cannot turn thinking off).
+    ai_thinking_budget: int | None = Field(default=0, ge=-1, le=32_768)
     ai_max_output_tokens: int = Field(default=2500, ge=256, le=32_000)
     # Unset = the provider default (some reasoning models reject a temperature).
     ai_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
@@ -167,14 +187,16 @@ class Settings(BaseSettings):
         normalise_database_url(value.get_secret_value())  # raises ValueError on an unusable URL
         return value
 
-    @field_validator("ingestion_admin_token", "gmail_client_secret", "gmail_refresh_token", "openai_api_key")
+    @field_validator(
+        "ingestion_admin_token", "gmail_client_secret", "gmail_refresh_token", "openai_api_key", "gemini_api_key"
+    )
     @classmethod
     def _blank_secret_is_unset(cls, value: SecretStr | None) -> SecretStr | None:
         if value is None or not value.get_secret_value().strip():
             return None
         return SecretStr(value.get_secret_value().strip())
 
-    @field_validator("gmail_client_id", "ai_model", "ai_repair_model")
+    @field_validator("gmail_client_id", "ai_model", "ai_repair_model", "ai_fallback_model")
     @classmethod
     def _blank_is_unset(cls, value: str | None) -> str | None:
         return value.strip() if value and value.strip() else None
@@ -185,6 +207,17 @@ class Settings(BaseSettings):
         if value is not None and len(value.get_secret_value()) < 32:
             raise ValueError("INGESTION_ADMIN_TOKEN must be at least 32 characters (use a random value).")
         return value
+
+    @field_validator("ai_thinking_budget", mode="before")
+    @classmethod
+    def _blank_budget_is_model_default(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @model_validator(mode="after")
+    def _ai_defaults(self) -> "Settings":
+        if self.ai_model is None and self.ai_provider in DEFAULT_AI_MODELS:
+            self.ai_model = DEFAULT_AI_MODELS[self.ai_provider]
+        return self
 
     @model_validator(mode="after")
     def _production_rules(self) -> "Settings":
@@ -204,14 +237,30 @@ class Settings(BaseSettings):
             return None
         return normalise_database_url(self.database_url.get_secret_value())
 
-    @field_validator("ai_base_url")
+    @field_validator("ai_base_url", mode="before")
     @classmethod
-    def _ai_base_url(cls, value: str) -> str:
+    def _ai_base_url(cls, value: str | None) -> str | None:
+        if value is None or not str(value).strip():
+            return None
         value = value.strip().rstrip("/")
         local = value.startswith(("http://localhost", "http://127.0.0.1"))
         if not (value.startswith("https://") or local):
             raise ValueError("AI_BASE_URL must use https:// (plain http only for localhost).")
         return value
+
+    @property
+    def ai_endpoint(self) -> str:
+        """AI_BASE_URL, or the configured provider's own endpoint when it is unset."""
+        return self.ai_base_url or DEFAULT_AI_BASE_URLS.get(self.ai_provider, DEFAULT_AI_BASE_URLS["openai"])
+
+    @property
+    def ai_api_key(self) -> SecretStr | None:
+        """The API key for the configured provider."""
+        return self.gemini_api_key if self.ai_provider == "gemini" else self.openai_api_key
+
+    @property
+    def ai_api_key_name(self) -> str:
+        return "GEMINI_API_KEY" if self.ai_provider == "gemini" else "OPENAI_API_KEY"
 
     @property
     def gmail_configured(self) -> bool:

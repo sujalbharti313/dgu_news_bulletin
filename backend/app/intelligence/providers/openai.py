@@ -47,7 +47,7 @@ class OpenAIProvider:
         if settings.openai_api_key is None:
             raise IntelligenceConfigError("OPENAI_API_KEY is not set (backend/.env or host secrets).")
         self._client = httpx.AsyncClient(
-            base_url=settings.ai_base_url,
+            base_url=settings.ai_endpoint,
             timeout=httpx.Timeout(settings.ai_request_timeout_seconds, connect=10.0),
             headers={
                 "Authorization": f"Bearer {settings.openai_api_key.get_secret_value()}",

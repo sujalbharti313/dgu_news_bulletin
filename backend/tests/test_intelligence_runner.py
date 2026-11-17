@@ -274,7 +274,7 @@ def test_cli_check_reports_configuration_without_calls(monkeypatch, capsys):
     monkeypatch.setattr(cli, "Settings", lambda: ai_settings())
     assert cli.main(["check"]) == 0
     out = capsys.readouterr().out
-    assert "Model: test-model" in out and "API key: configured" in out and "sk-test" not in out
+    assert "Model: test-model" in out and "API key (OPENAI_API_KEY): configured" in out and "sk-test" not in out
     monkeypatch.setattr(cli, "Settings", lambda: ai_settings(ai_model=None))
     assert cli.main(["check"]) == 2
     assert cli.main(["run"]) == 2  # no DATABASE_URL: refuses before any call

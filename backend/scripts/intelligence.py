@@ -8,8 +8,9 @@
     python -m scripts.intelligence records                # per-story status, attempts, errors
     python -m scripts.intelligence dry-run --limit 2      # analyse current DB clusters, store NOTHING
 
-`run` and `dry-run` call the AI provider and cost money (bounded by AI_MAX_STORIES_PER_RUN and, when prices
-are set, AI_MAX_COST_PER_RUN_USD). Exit codes: 0 success, 1 failed or partial run, 2 configuration problem.
+`run` and `dry-run` call the AI provider (bounded by AI_MAX_STORIES_PER_RUN and, when prices are set,
+AI_MAX_COST_PER_RUN_USD). With the default Gemini free tier they cost nothing; a paid provider bills per
+token. Exit codes: 0 success, 1 failed or partial run, 2 configuration problem.
 Nothing is ever published by this command.
 """
 
@@ -82,9 +83,12 @@ def cmd_check(settings: Settings, args) -> int:
     keys = ", ".join(categories.keys)
     print(f"Categories: {len(categories.categories)} ({keys}), max secondary {categories.max_secondary}")
     print(f"Engine key: {engine_key(categories, settings)}")
-    print(f"Provider: {settings.ai_provider} at {settings.ai_base_url}")
-    print(f"Model: {settings.ai_model or 'NOT SET'}   repair model: {settings.ai_repair_model or '(same)'}")
-    print(f"API key: {'configured' if settings.openai_api_key else 'NOT SET'}")
+    print(f"Provider: {settings.ai_provider} at {settings.ai_endpoint}")
+    print(f"Model: {settings.ai_model or 'NOT SET'}   repair model: {settings.ai_repair_model or '(same)'}   "
+          f"fallback model: {settings.ai_fallback_model or '(none)'}")  # fmt: skip
+    print(f"API key ({settings.ai_api_key_name}): {'configured' if settings.ai_api_key else 'NOT SET'}")
+    rpm = settings.ai_requests_per_minute
+    print(f"Pacing: {f'at most {rpm} requests/minute' if rpm else 'off'}")
     priced = (
         settings.ai_input_cost_per_million_tokens is not None and settings.ai_output_cost_per_million_tokens is not None
     )

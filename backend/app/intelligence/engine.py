@@ -2,6 +2,7 @@
 bounded repair → contract. Pure apart from the provider call; persistence belongs to the runner."""
 
 import asyncio
+import dataclasses
 import logging
 import random
 import time
@@ -65,6 +66,29 @@ class RateGate:
             await self._sleep(delay)
 
 
+class RequestPacer:
+    """Spaces request starts so a run stays under a requests-per-minute limit, across every worker.
+    Retries and repair calls go through it too: each is a request against the provider's quota."""
+
+    def __init__(
+        self, per_minute: int, sleep: Callable[[float], Awaitable[None]] = asyncio.sleep, clock=time.monotonic
+    ):
+        self._interval = 60.0 / per_minute if per_minute > 0 else 0.0
+        self._next = 0.0
+        self._sleep = sleep
+        self._clock = clock
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        if self._interval <= 0:
+            return
+        async with self._lock:
+            delay = self._next - self._clock()
+            if delay > 0:
+                await self._sleep(delay)
+            self._next = max(self._clock(), self._next) + self._interval
+
+
 @dataclass
 class AnalysisOutcome:
     status: IntelligenceStatus
@@ -96,6 +120,7 @@ class StoryAnalyzer:
         *,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         gate: RateGate | None = None,
+        pacer: RequestPacer | None = None,
         rng: random.Random | None = None,
     ):
         if not settings.ai_model:
@@ -105,19 +130,47 @@ class StoryAnalyzer:
         self.categories = categories
         self.sleep = sleep
         self.gate = gate or RateGate(sleep)
+        self.pacer = pacer or RequestPacer(settings.ai_requests_per_minute, sleep)
+        # Models whose rate limit or daily quota ran out during this run; later calls use AI_FALLBACK_MODEL.
+        self.exhausted_models: set[str] = set()
         self.rng = rng or random.Random()  # noqa: S311 - jitter, not security
         self.engine_key = engine_key(categories, settings)
         self.schema = response_json_schema(categories.keys, settings.ai_max_project_ideas)
         self.system = system_prompt(categories, settings.ai_max_project_ideas)
 
+    def _model(self, wanted: str) -> str:
+        fallback = self.settings.ai_fallback_model
+        if wanted in self.exhausted_models and fallback and fallback not in self.exhausted_models:
+            return fallback
+        return wanted
+
+    def _switch_to_fallback(self, request: GenerationRequest, exc: ProviderError) -> GenerationRequest | None:
+        """After the model's quota or rate limit is used up, continue on AI_FALLBACK_MODEL (if any)."""
+        fallback = self.settings.ai_fallback_model
+        if not fallback or request.model == fallback or fallback in self.exhausted_models:
+            return None
+        self.exhausted_models.add(request.model)
+        logger.warning("AI model %s: %s Switching to fallback model %s.", request.model, exc.safe_message, fallback)
+        return dataclasses.replace(request, model=fallback)
+
     async def _call(self, request: GenerationRequest) -> tuple[GenerationResponse, int]:
-        """One logical call with bounded retries for timeouts, rate limits and outages."""
+        """One logical call with bounded retries for timeouts, rate limits and outages, and a switch to the
+        fallback model when the configured model's quota runs out."""
         s = self.settings
-        for attempt in range(s.ai_max_retries + 1):
+        calls = 0
+        attempt = 0
+        while True:
             await self.gate.wait()
+            await self.pacer.acquire()
+            calls += 1
             try:
-                return await self.provider.generate(request), attempt + 1
+                return await self.provider.generate(request), calls
             except ProviderError as exc:
+                used_up = exc.kind == "quota" or (exc.kind == "rate_limited" and attempt == s.ai_max_retries)
+                switched = self._switch_to_fallback(request, exc) if used_up else None
+                if switched is not None:
+                    request, attempt = switched, 0
+                    continue
                 if not exc.retryable or attempt == s.ai_max_retries:
                     raise
                 delay = exc.retry_after if exc.retry_after is not None else min(2.0 * 2**attempt, 30.0)
@@ -126,7 +179,7 @@ class StoryAnalyzer:
                     self.gate.block(delay)
                 logger.warning("AI provider %s, retrying in %.1fs (attempt %d)", exc.kind, delay, attempt + 1)
                 await self.sleep(delay)
-        raise AssertionError("unreachable")  # pragma: no cover
+                attempt += 1
 
     async def analyse(self, cluster: StoryCluster, now: datetime) -> AnalysisOutcome:
         s = self.settings
@@ -141,12 +194,12 @@ class StoryAnalyzer:
             )  # fmt: skip
 
         messages = [Message("system", self.system), Message("user", user_prompt(pack))]
-        model = s.ai_model
+        model = self._model(s.ai_model)
         usage, calls, issues = Usage(), 0, []
         last_model = model
         for round_ in range(s.ai_max_repair_attempts + 1):
             request = GenerationRequest(
-                model=model,
+                model=self._model(model),
                 messages=list(messages),
                 schema_name=SCHEMA_NAME,
                 json_schema=self.schema,

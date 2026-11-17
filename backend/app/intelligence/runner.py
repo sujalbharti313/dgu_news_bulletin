@@ -87,6 +87,11 @@ def check_ready(settings: Settings) -> None:
     """Configuration needed before any call is made. Raises IntelligenceConfigError with a safe message."""
     if not settings.ai_model:
         raise IntelligenceConfigError("AI_MODEL is not set. Choose a model that supports JSON-schema output.")
+    if settings.ai_provider == "gemini" and settings.gemini_api_key is None:
+        raise IntelligenceConfigError(
+            "GEMINI_API_KEY is not set. Get a free key at https://aistudio.google.com/apikey and put it in "
+            "backend/.env (or host secrets)."
+        )
     if settings.ai_provider == "openai" and settings.openai_api_key is None:
         raise IntelligenceConfigError("OPENAI_API_KEY is not set (backend/.env or host secrets).")
 
@@ -241,6 +246,9 @@ class IntelligenceRunner:
         await asyncio.gather(*(work(c, st) for c, st in todo))
         report.counts = {k: v for k, v in counts.items() if v}
         report.usage = {**totals, "model": s.ai_model, "cost_estimated": s.ai_input_cost_per_million_tokens is not None}
+        if analyzer.exhausted_models:
+            report.usage["quota_exhausted_models"] = sorted(analyzer.exhausted_models)
+            report.usage["fallback_model"] = s.ai_fallback_model
         if stop_reason:
             report.status, report.reason = "failed", stop_reason[0]
         elif counts["failed"] or counts["invalid_output"]:

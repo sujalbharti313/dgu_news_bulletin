@@ -10,9 +10,7 @@ FastAPI · Pydantic v2 · SQLAlchemy 2 · psycopg 3 · Alembic · httpx · feedp
 The backend is independent of the Next.js frontend: it lives in `backend/`, has its own dependencies,
 and deploys to any Python host. The frontend talks to it only through `NEXT_PUBLIC_API_BASE_URL`.
 
-> **Status of the live database:** the Supabase project has migrations `0001` to `0003` and the reference data.
-> Migration `0004` (Phase 3.3 `story_intelligence` table) has been tested against a local PostgreSQL 16 only;
-> apply it with `alembic upgrade head` before running the intelligence engine against Supabase.
+> **Status of the live database:** the Supabase project has migrations `0001` to `0004` and the reference data.
 
 ---
 
@@ -763,8 +761,10 @@ app/intelligence/
 ├── evidence.py     StoryCluster → evidence pack: source ids S1..Sn, copy groups, allowed numbers and URLs
 ├── prompts.py      system prompt (all instructions) + delimited, JSON-encoded evidence block + repair prompt
 ├── validation.py   schema + evidence checks → issues; review flags; assembly of the Stage 3.4 contract
-├── providers/      base.py (interface, errors, usage) · openai.py (Chat Completions, strict JSON schema, httpx)
-├── engine.py       one cluster: evidence → call (bounded retries, Retry-After) → validate → bounded repair
+├── providers/      base.py (interface, errors, usage) · gemini.py (default; generateContent + JSON schema)
+│                   · openai.py (OpenAI-compatible Chat Completions, strict JSON schema); both over httpx
+├── engine.py       one cluster: evidence → paced call (bounded retries, Retry-After, fallback model) →
+│                   validate → bounded repair
 ├── runner.py       one run: lock, choose clusters that need work, bounded concurrency, save per story, report
 ├── store.py        story_intelligence persistence (SQL + in-memory) and the run lock
 ├── contract.py     StoryIntelligence: the Stage 3.3 → 3.4 interface
@@ -779,28 +779,49 @@ including classification, so no separate classification call is made.
 
 ### Provider and configuration
 
-`AI_PROVIDER=openai` is the only implementation today. It calls `POST {AI_BASE_URL}/chat/completions` with
-`response_format: json_schema, strict: true` over the existing `httpx` (no SDK dependency), so any
-OpenAI-compatible endpoint works by changing `AI_BASE_URL`. A new provider implements `generate()` and
-`aclose()` from `providers/base.py` and is registered in `providers/__init__.py`.
+The default provider is **Google Gemini on its free tier** (`AI_PROVIDER=gemini`,
+`AI_MODEL=gemini-2.5-flash-lite`), so the engine costs nothing to run. It calls
+`POST {AI_BASE_URL}/models/{AI_MODEL}:generateContent` with `responseMimeType: application/json` and
+`responseJsonSchema` (the same schema, with `$ref`s inlined) over `httpx`. `AI_PROVIDER=openai` still works
+for OpenAI or any OpenAI-compatible endpoint (for example a local Ollama at `http://localhost:11434/v1`).
+A new provider implements `generate()` and `aclose()` from `providers/base.py` and is registered in
+`providers/__init__.py`.
 
-**An OpenAI API key is billed per token on platform.openai.com, separately from any ChatGPT subscription.**
-Keep the key in `backend/.env` or host secrets; it is only ever sent in the Authorization header and never logged.
-`AI_MODEL` has no default: pick a model that supports JSON-schema structured output.
+**Getting a free Gemini key (about two minutes, no card):**
+
+1. Open <https://aistudio.google.com/apikey> and sign in with a Google account.
+2. Click **Create API key**. If asked, pick or create a Google Cloud project (the free tier needs no billing).
+3. Copy the key and put it in `backend/.env` as `GEMINI_API_KEY=...`. Never paste it into chat, code or the
+   frontend; it is sent only in the `x-goog-api-key` header and never logged.
+4. Check the current free limits for your model under **Usage and limits** in AI Studio (Google changes them).
+
+Free-tier notes: limits are per model, per minute and per day (at the time of writing roughly 15 requests a
+minute and 1,000 a day for Flash-Lite; Flash has lower limits). `AI_REQUESTS_PER_MINUTE` (default 10) paces
+every request, retries and repairs included, so a run stays under the per-minute limit. A per-minute 429 is
+retried after the delay Google returns. A per-day 429 means the model's quota is used up until midnight
+Pacific time: the run switches to `AI_FALLBACK_MODEL` (e.g. `gemini-2.5-flash`) if set, otherwise it stops
+without touching the remaining stories. On the free tier Google may use prompts to improve its products, which
+is acceptable for public news text; never send private data through it. If analyses come out shallow, set
+`AI_MODEL=gemini-2.5-flash`.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | — | Required to run. Server-side only |
-| `AI_MODEL` | — | Required. Model for analysis |
+| `AI_PROVIDER` | `gemini` | `gemini` or `openai` |
+| `GEMINI_API_KEY` | — | Required for `gemini`. Free from aistudio.google.com/apikey. Server-side only |
+| `OPENAI_API_KEY` | — | Required for `openai`. Server-side only |
+| `AI_MODEL` | `gemini-2.5-flash-lite` (gemini); none (openai) | Model for analysis |
 | `AI_REPAIR_MODEL` | `AI_MODEL` | Optional cheaper model for repair (re-formatting) attempts |
-| `AI_PROVIDER` / `AI_BASE_URL` | `openai` / `https://api.openai.com/v1` | https only (http only for localhost) |
+| `AI_FALLBACK_MODEL` | unset | Used for the rest of a run once `AI_MODEL`'s rate limit or daily quota is used up |
+| `AI_REQUESTS_PER_MINUTE` | 10 | Client-side pacing across all workers; 0 = off |
+| `AI_THINKING_BUDGET` | 0 | Gemini 2.5 only: 0 = thinking off, -1 = dynamic, empty = model default |
+| `AI_BASE_URL` | the provider's endpoint | https only (http only for localhost) |
 | `AI_MAX_OUTPUT_TOKENS` | 2500 | Per call |
 | `AI_TEMPERATURE` | unset | Unset = provider default |
 | `AI_REQUEST_TIMEOUT_SECONDS` | 60 | Per request |
 | `AI_MAX_RETRIES` / `AI_MAX_RETRY_AFTER_SECONDS` | 3 / 60 | Retries for timeouts, 429, 5xx; exponential backoff, `Retry-After` honoured (capped) |
 | `AI_MAX_REPAIR_ATTEMPTS` | 1 | Extra calls when a response fails validation |
 | `AI_MAX_ATTEMPTS_PER_STORY` / `AI_RETRY_DELAY_MINUTES` | 3 / 30 | A failing story is retried in later runs, delay × attempt, until the cap (then only with `--retry-failed`) |
-| `AI_MAX_CONCURRENCY` | 2 | Parallel calls; a 429 pauses all of them |
+| `AI_MAX_CONCURRENCY` | 2 | Parallel calls (still paced by `AI_REQUESTS_PER_MINUTE`); a 429 pauses all of them |
 | `AI_MAX_STORIES_PER_RUN` | 25 | Hard cap on stories analysed per run |
 | `AI_INPUT_COST_PER_MILLION_TOKENS` / `AI_OUTPUT_COST_PER_MILLION_TOKENS` | unset | Your model's prices; enable cost estimates. Never guessed |
 | `AI_MAX_COST_PER_RUN_USD` | unset | Stop starting new stories once the estimate reaches this |
@@ -896,8 +917,8 @@ Over HTTP, when `INGESTION_ADMIN_TOKEN` is set (404 otherwise; not in the OpenAP
 
 ### Tests
 
-`pytest tests/test_intelligence_*.py` (provider, validation, engine, runner, store, admin). Every AI response is
-mocked (a scripted fake provider, and `httpx.MockTransport` for the OpenAI client), so no key or network is
+`pytest tests/test_intelligence_*.py` (providers, Gemini, validation, engine, runner, store, admin). Every AI response is
+mocked (a scripted fake provider, and `httpx.MockTransport` for the Gemini and OpenAI clients), so no key or network is
 needed. The store and end-to-end Stage 3.1 → 3.2 → 3.3 tests need `TEST_DATABASE_URL`.
 
 ### Limitations
@@ -907,8 +928,8 @@ needed. The store and end-to-end Stage 3.1 → 3.2 → 3.3 tests need `TEST_DATA
 - The number and URL checks catch invented figures and links, not every unsupported sentence. Wording-level
   faithfulness is for Stage 3.4 verification and human review.
 - Cost estimates use the prices you configure; with none set, only tokens are tracked.
-- Prompts were tested with mocked responses only. Run `scripts.intelligence dry-run --limit 2` with your key and
-  model before the first real run.
+- Prompts and the Gemini client were tested with mocked responses only. Run
+  `scripts.intelligence dry-run --limit 2` with your key before the first real run.
 - Expired `story_intelligence` rows stay until Stage 3.6 adds clean-up.
 
 ## Connecting the frontend
