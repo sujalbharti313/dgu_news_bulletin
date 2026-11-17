@@ -92,6 +92,44 @@ class Settings(BaseSettings):
     # Upper bound on staged items loaded per processing run (newest first); keeps a run's cost bounded.
     processing_max_items: int = Field(default=5000, ge=10, le=50_000)
 
+    # --- Phase 3.3 AI intelligence engine (Google Gemini API). Server-side only; never sent to the frontend. ---
+    # API key from https://aistudio.google.com/apikey (Google AI Studio). Read only from the environment.
+    gemini_api_key: SecretStr | None = None
+    # Exact model id. There is no automatic fallback: if this model is unavailable the run stops and says so.
+    ai_model: str = Field(
+        default="gemini-3.5-flash-lite", min_length=3, max_length=120, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    )
+    # Gemini 3 thinking level: minimal (fastest, fewest tokens), low, medium or high. Empty = model default.
+    ai_thinking_level: str | None = Field(default="minimal", pattern=r"^(minimal|low|medium|high)$")
+    ai_max_output_tokens: int = Field(default=4096, ge=512, le=32_000)
+    # Prompts estimated above this many input tokens are trimmed (shorter excerpts, fewer copies) before sending.
+    ai_max_input_tokens: int = Field(default=12_000, ge=1_000, le=200_000)
+    ai_request_timeout_seconds: float = Field(default=60.0, ge=5.0, le=600.0)
+    # Retries per request for timeouts, per-minute rate limits and 5xx (exponential backoff with jitter).
+    ai_max_retries: int = Field(default=3, ge=0, le=6)
+    ai_max_retry_after_seconds: float = Field(default=60.0, ge=1.0, le=600.0)
+    # Extra calls allowed to fix a response that failed validation (each counts against the quota).
+    ai_max_repair_attempts: int = Field(default=1, ge=0, le=2)
+    # Free-tier guards. Requests per minute are paced client-side; requests and tokens per day are counted in
+    # the ai_usage_daily table (shared by every process) and the run stops before a limit is crossed. Set
+    # them at or below the limits AI Studio shows for your key under "Usage and limits". 0 = no limit.
+    ai_requests_per_minute: int = Field(default=10, ge=0, le=10_000)
+    ai_requests_per_day: int = Field(default=200, ge=0, le=1_000_000)
+    ai_tokens_per_day: int = Field(default=1_000_000, ge=0, le=1_000_000_000)
+    ai_max_stories_per_run: int = Field(default=25, ge=1, le=500)
+    ai_max_concurrency: int = Field(default=2, ge=1, le=8)
+    # A story that keeps failing is retried at most this many times (then left for a manual --retry-failed).
+    ai_max_attempts_per_story: int = Field(default=3, ge=1, le=10)
+    ai_retry_delay_minutes: int = Field(default=30, ge=1, le=1440)
+    # Clusters with fewer distinct words of source text than this are not sent to the model.
+    ai_min_evidence_words: int = Field(default=12, ge=0, le=500)
+    # Sources per story sent to the model (copies and duplicates are dropped first).
+    ai_max_sources_per_story: int = Field(default=8, ge=1, le=30)
+    ai_max_project_ideas: int = Field(default=3, ge=0, le=3)
+    intelligence_categories_file: str = "config/intelligence_categories.toml"
+    # Analyses are working data for Stage 3.4, not an archive; they record this expiry (no automatic purge).
+    intelligence_retention_days: int = Field(default=30, ge=1, le=365)
+
     # Gmail API (OAuth 2.0, gmail.readonly). All three must be set or Gmail sources are skipped.
     gmail_client_id: str | None = None
     gmail_client_secret: SecretStr | None = None
@@ -130,12 +168,19 @@ class Settings(BaseSettings):
         normalise_database_url(value.get_secret_value())  # raises ValueError on an unusable URL
         return value
 
-    @field_validator("ingestion_admin_token", "gmail_client_secret", "gmail_refresh_token")
+    @field_validator("ingestion_admin_token", "gmail_client_secret", "gmail_refresh_token", "gemini_api_key")
     @classmethod
     def _blank_secret_is_unset(cls, value: SecretStr | None) -> SecretStr | None:
         if value is None or not value.get_secret_value().strip():
             return None
         return SecretStr(value.get_secret_value().strip())
+
+    @field_validator("ai_thinking_level", mode="before")
+    @classmethod
+    def _thinking_level(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip().lower() or None
+        return value
 
     @field_validator("gmail_client_id")
     @classmethod

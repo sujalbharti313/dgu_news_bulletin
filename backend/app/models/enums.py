@@ -88,7 +88,7 @@ class CampusItemKind(StrEnum):
 
 class IngestionJobType(StrEnum):
     """SOURCE_FETCH (RSS/Atom) and NEWSLETTER_IMPORT (Gmail) are used by Phase 3.1, STORY_PROCESSING by
-    Phase 3.2; the rest are reserved."""
+    Phase 3.2, SUMMARISATION by Phase 3.3 (one AI analysis run); VERIFICATION is reserved."""
 
     SOURCE_FETCH = "source_fetch"
     NEWSLETTER_IMPORT = "newsletter_import"
@@ -134,3 +134,22 @@ class DedupRelation(StrEnum):
     NEAR_DUPLICATE = "near_duplicate"
     # A different article reporting the same event.
     RELATED_REPORT = "related_report"
+
+
+class AnalysisStatus(StrEnum):
+    """Per-story state of the Phase 3.3 AI intelligence engine (one row per story cluster)."""
+
+    # Valid, evidence-checked analysis with no blocking review flag. Stage 3.4 may use it.
+    COMPLETED = "completed"
+    # Valid analysis that a human must look at first (flagged source content, instruction-like text).
+    NEEDS_REVIEW = "needs_review"
+    # The sources are too thin: either not sent to the model at all (no analysis stored), or the model said the
+    # evidence is insufficient (analysis stored, with low priority and the missing information listed).
+    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+    # The model's output still failed validation after the repair attempts. Nothing stored; retried later.
+    INVALID_OUTPUT = "invalid_output"
+    # Gemini error (timeout, outage, persistent rate limit). Nothing stored; retried later.
+    FAILED = "failed"
+    # Not analysed because the free quota (Google's, or the configured daily limit) ran out. Not counted as an
+    # attempt; picked up again automatically after the quota resets.
+    QUOTA_LIMITED = "quota_limited"

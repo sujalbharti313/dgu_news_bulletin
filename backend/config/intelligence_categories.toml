@@ -1,0 +1,58 @@
+# Stage 3.3 story categories. The AI may choose only these keys; labels are what readers see.
+# Changing this file changes the engine key, so stories are re-analysed on the next run.
+# `topic` maps a category to the frontend's topic filter (src/lib/types.ts); omit it when none fits.
+
+max_secondary = 2
+
+[[categories]]
+key = "ai-research"
+label = "AI Research"
+description = "New research findings, papers, preprints, methods, datasets and benchmark studies from labs or universities."
+topic = "research"
+
+[[categories]]
+key = "ai-model-releases"
+label = "AI Model Releases"
+description = "A new or updated AI model is released, opened up or made available (weights, API or product)."
+topic = "models"
+
+[[categories]]
+key = "ai-tools-development"
+label = "AI Tools and Development"
+description = "Developer tools, frameworks, libraries, SDKs, APIs, agents and open-source software for building with AI."
+topic = "tools"
+
+[[categories]]
+key = "industry-business"
+label = "Industry and Business"
+description = "Funding, acquisitions, partnerships, company strategy, pricing, products and market moves in the AI industry."
+
+[[categories]]
+key = "india-ai"
+label = "India × AI"
+description = "AI developments in or about India: Indian companies, institutions, government programmes, research or policy."
+topic = "india"
+
+[[categories]]
+key = "ai-safety-governance"
+label = "AI Safety and Governance"
+description = "AI safety, alignment, security, evaluation of risks, regulation, law, policy, ethics and standards."
+topic = "policy"
+
+[[categories]]
+key = "ai-education-careers"
+label = "AI Education and Careers"
+description = "Courses, learning resources, skills, jobs, internships, fellowships, grants and AI in education."
+topic = "careers"
+
+[[categories]]
+key = "ai-infrastructure-hardware"
+label = "AI Infrastructure and Hardware"
+description = "Chips, accelerators, data centres, compute, cloud platforms, energy use and serving infrastructure for AI."
+topic = "tools"
+
+[[categories]]
+key = "robotics-automation"
+label = "Robotics and Automation"
+description = "Robots, embodied AI, autonomous vehicles and drones, and automation of physical or industrial work."
+topic = "research"
