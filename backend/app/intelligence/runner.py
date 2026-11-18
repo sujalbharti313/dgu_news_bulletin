@@ -26,6 +26,7 @@ from app.intelligence.categories import CategorySet, load_categories
 from app.intelligence.contract import StoryAnalysis
 from app.intelligence.engine import AnalysisOutcome, StoryAnalyzer, engine_key
 from app.intelligence.errors import IntelligenceConfigError
+from app.intelligence.evidence import build_evidence
 from app.intelligence.providers import build_provider
 from app.intelligence.providers.base import IntelligenceProvider
 from app.intelligence.providers.gemini import MISSING_KEY
@@ -245,9 +246,15 @@ class AnalysisRunner:
             counts[decision] += 1
             if decision in ("new", "changed", "retry", "resume"):
                 todo.append((c, state))
+        # Stories with the most source text go first, so a small run limit is spent where the model can do
+        # real work. Stories too thin to send cost no request and never use up the run limit.
+        words = {c.cluster_id: build_evidence(c).word_count for c, _ in todo}
+        todo.sort(key=lambda t: -words[t[0].cluster_id])  # stable: ties keep the source order
+        rich = [t for t in todo if words[t[0].cluster_id] >= s.ai_min_evidence_words]
+        thin = [t for t in todo if words[t[0].cluster_id] < s.ai_min_evidence_words]
         cap = min(limit or s.ai_max_stories_per_run, s.ai_max_stories_per_run)
-        counts["deferred_by_run_limit"] = max(0, len(todo) - cap)
-        todo = todo[:cap]
+        counts["deferred_by_run_limit"] = max(0, len(rich) - cap)
+        todo = rich[:cap] + thin
 
         analyzer = StoryAnalyzer(s, provider, categories, ledger=self.ledger, sleep=self.sleep, clock=self.clock)
         semaphore = asyncio.Semaphore(s.ai_max_concurrency)
