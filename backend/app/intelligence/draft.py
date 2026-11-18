@@ -153,14 +153,35 @@ class AnalysisDraft(_Draft):
     uncertainties: list[str] = Field(max_length=8)
 
 
-_STRIP_KEYS = {"minLength", "maxLength", "minItems", "maxItems", "default", "title"}
+# Gemini enforces minItems/maxItems/minimum/maximum but not string lengths, so string limits are kept out of
+# the schema and stated in the field description instead (with some margin under the limit we validate).
+_STRIP_KEYS = {"minLength", "maxLength", "default", "title"}
+
+
+def _nullable(node: dict[str, Any]) -> dict[str, Any]:
+    """`anyOf: [{type: X, ...}, {type: null}]` → `{type: [X, "null"], ...}`: the nullable form Gemini documents."""
+    options = node.get("anyOf")
+    if not (isinstance(options, list) and len(options) == 2 and {"type": "null"} in options):
+        return node
+    other = next(o for o in options if o != {"type": "null"})
+    if not isinstance(other.get("type"), str) or other["type"] in ("object", "array") or "$ref" in other:
+        return node
+    rest = {k: v for k, v in node.items() if k != "anyOf"}
+    return {**other, **rest, "type": [other["type"], "null"]}
 
 
 def _strictify(node: Any) -> Any:
-    """Pydantic JSON Schema → structured-output schema: every property required, no extra properties, no
-    length keywords (enforced by our own validation instead)."""
+    """Pydantic JSON Schema → structured-output schema: every property required, no extra properties, nullable
+    fields as type lists, and string lengths turned into instructions (enforced by our own validation)."""
     if isinstance(node, dict):
+        node = _nullable(node)
         out = {k: _strictify(v) for k, v in node.items() if k not in _STRIP_KEYS}
+        limit = node.get("maxLength")
+        if isinstance(limit, int) and "string" in (
+            out.get("type") if isinstance(out.get("type"), list) else [out.get("type")]
+        ):
+            hint = f"At most {int(limit * 0.8)} characters."
+            out["description"] = f"{out['description']} {hint}" if out.get("description") else hint
         if out.get("type") == "object" and "properties" in out:
             out["required"] = list(out["properties"])
             out["additionalProperties"] = False
