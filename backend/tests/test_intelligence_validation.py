@@ -127,10 +127,11 @@ def test_the_nine_specified_categories_are_configured():
     ]
 
 
-def test_response_schema_uses_only_keywords_gemini_enforces():
+def test_response_schema_states_limits_as_instructions():
     schema = response_json_schema(CATEGORIES.keys, 3)
     text = json.dumps(schema)
-    assert "anyOf" not in text and "maxLength" not in text  # nullable as type lists; lengths as instructions
-    assert schema["properties"]["summary"]["type"] == ["string", "null"]
-    assert schema["properties"]["understanding"]["properties"]["key_points"]["maxItems"] == 6
-    assert "At most" in schema["properties"]["headline"]["description"]
+    for keyword in ("maxLength", "minLength", "maxItems", "minItems"):
+        assert keyword not in text
+    assert "At most 6 items." in schema["properties"]["understanding"]["properties"]["key_points"]["description"]
+    assert "At most 112 characters." in schema["properties"]["headline"]["description"]
+    assert "characters" in schema["properties"]["summary"]["description"]

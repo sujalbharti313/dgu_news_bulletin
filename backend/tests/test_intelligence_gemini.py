@@ -192,3 +192,11 @@ def test_error_messages_never_contain_the_key_or_prompt():
     body = {"error": {"status": "INVALID_ARGUMENT", "message": f"bad key {FAKE_KEY} for prompt SECRET-PROMPT"}}
     err = classify_api_error(400, body)
     assert FAKE_KEY not in err.safe_message and "SECRET-PROMPT" not in err.safe_message
+
+
+def test_schema_rejections_keep_googles_reason_without_secrets():
+    body = {
+        "error": {"status": "INVALID_ARGUMENT", "message": f"Invalid response_json_schema: too many states {FAKE_KEY}"}
+    }
+    err = classify_api_error(400, body)
+    assert err.kind == "bad_request" and "too many states" in err.safe_message and FAKE_KEY not in err.safe_message

@@ -102,8 +102,21 @@ def classify_api_error(code: int | None, body: Any) -> ProviderError:
         return ProviderError("unavailable", f"The Gemini API returned HTTP {status}.", status_code=status)
     suffix = f", {api_status}" if api_status else ""
     return ProviderError(
-        "bad_request", f"The Gemini API rejected the request (HTTP {status}{suffix}).", status_code=status
+        "bad_request",
+        f"The Gemini API rejected the request (HTTP {status}{suffix}){_schema_hint(message)}.",
+        status_code=status,
     )
+
+
+_LONG_TOKEN = re.compile(r"\S{24,}")
+
+
+def _schema_hint(message: str) -> str:
+    """Google's reason, only when it is about the response schema (which holds no key, prompt or source text);
+    long unbroken tokens are redacted and the text is shortened."""
+    if not re.search(r"(?i)schema|constraint|response_json|responseJsonSchema", message or ""):
+        return ""
+    return ": " + _LONG_TOKEN.sub("[redacted]", message)[:300]
 
 
 class GeminiProvider:
