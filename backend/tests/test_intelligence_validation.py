@@ -135,3 +135,27 @@ def test_response_schema_states_limits_as_instructions():
     assert "At most 6 items." in schema["properties"]["understanding"]["properties"]["key_points"]["description"]
     assert "At most 112 characters." in schema["properties"]["headline"]["description"]
     assert "characters" in schema["properties"]["summary"]["description"]
+
+
+def test_fields_named_like_schema_keywords_are_kept():
+    """`title` is a keyword we strip, but also the name of a project idea field."""
+    schema = response_json_schema(CATEGORIES.keys, 3)
+    idea = schema["properties"]["project_ideas"]["items"]
+    assert set(idea["properties"]) == {"title", "description", "technologies"}
+    assert set(idea["required"]) == set(idea["properties"])
+
+    def no_keyword_titles(node, in_properties=False):
+        if isinstance(node, dict):
+            if not in_properties:
+                assert "title" not in node or isinstance(node["title"], dict)
+            for k, v in node.items():
+                if k == "properties":
+                    for sub in v.values():
+                        no_keyword_titles(sub)
+                else:
+                    no_keyword_titles(v)
+        elif isinstance(node, list):
+            for v in node:
+                no_keyword_titles(v)
+
+    no_keyword_titles(schema)

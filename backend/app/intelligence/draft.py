@@ -162,7 +162,16 @@ def _strictify(node: Any) -> Any:
     """Pydantic JSON Schema → structured-output schema: every property required, no extra properties, and
     length limits turned into instructions (enforced by our own validation)."""
     if isinstance(node, dict):
-        out = {k: _strictify(v) for k, v in node.items() if k not in _STRIP_KEYS}
+        out = {
+            # Inside `properties` the keys are field names (a field may be called "title"), never keywords.
+            k: (
+                {name: _strictify(sub) for name, sub in v.items()}
+                if k == "properties" and isinstance(v, dict)
+                else _strictify(v)
+            )
+            for k, v in node.items()
+            if k not in _STRIP_KEYS
+        }
         hints = []
         if isinstance(node.get("maxLength"), int):
             hints.append(f"At most {int(node['maxLength'] * 0.8)} characters.")
