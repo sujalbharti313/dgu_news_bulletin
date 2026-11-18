@@ -232,7 +232,12 @@ class StoryAnalyzer:
                     review_flags=flags,
                 )
             issues = result_issues
-            logger.info("analysis failed validation (round %d): %s", round_ + 1, [i.code for i in issues])
+            logger.info(
+                "analysis failed validation (round %d): %s",
+                round_ + 1,
+                # Field paths and rule messages only; never the model's text or the source text.
+                [f"{i.code} {i.path}: {i.message}"[:200] for i in issues if i.severity == "error"],
+            )
             if round_ < s.ai_max_repair_attempts:
                 messages.append(Message("assistant", (response.content or "")[:MAX_ECHO_CHARS]))
                 messages.append(Message("user", repair_prompt([str(i) for i in issues if i.severity == "error"])))
