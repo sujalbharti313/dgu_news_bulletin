@@ -195,6 +195,7 @@ class StoryAnalyzer:
                 response, n = await self._call(request)
             except ProviderError as exc:
                 calls += exc.calls
+                logger.warning("gemini request failed (%s): %s", exc.kind, exc.safe_message)
                 status = AnalysisStatus.QUOTA_LIMITED if exc.kind == "quota" else AnalysisStatus.FAILED
                 return AnalysisOutcome(status, error=exc, usage=usage + exc.usage, calls=calls, model=s.ai_model)
             calls += n

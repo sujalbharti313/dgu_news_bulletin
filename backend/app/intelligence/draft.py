@@ -153,35 +153,27 @@ class AnalysisDraft(_Draft):
     uncertainties: list[str] = Field(max_length=8)
 
 
-# Gemini enforces minItems/maxItems/minimum/maximum but not string lengths, so string limits are kept out of
-# the schema and stated in the field description instead (with some margin under the limit we validate).
-_STRIP_KEYS = {"minLength", "maxLength", "default", "title"}
-
-
-def _nullable(node: dict[str, Any]) -> dict[str, Any]:
-    """`anyOf: [{type: X, ...}, {type: null}]` → `{type: [X, "null"], ...}`: the nullable form Gemini documents."""
-    options = node.get("anyOf")
-    if not (isinstance(options, list) and len(options) == 2 and {"type": "null"} in options):
-        return node
-    other = next(o for o in options if o != {"type": "null"})
-    if not isinstance(other.get("type"), str) or other["type"] in ("object", "array") or "$ref" in other:
-        return node
-    rest = {k: v for k, v in node.items() if k != "anyOf"}
-    return {**other, **rest, "type": [other["type"], "null"]}
+# Length and item-count keywords are kept out of the schema (Gemini rejected requests that carried them) and are
+# stated in the field descriptions instead, with some margin under the limits our own validation enforces.
+_STRIP_KEYS = {"minLength", "maxLength", "minItems", "maxItems", "default", "title"}
 
 
 def _strictify(node: Any) -> Any:
-    """Pydantic JSON Schema → structured-output schema: every property required, no extra properties, nullable
-    fields as type lists, and string lengths turned into instructions (enforced by our own validation)."""
+    """Pydantic JSON Schema → structured-output schema: every property required, no extra properties, and
+    length limits turned into instructions (enforced by our own validation)."""
     if isinstance(node, dict):
-        node = _nullable(node)
         out = {k: _strictify(v) for k, v in node.items() if k not in _STRIP_KEYS}
-        limit = node.get("maxLength")
-        if isinstance(limit, int) and "string" in (
-            out.get("type") if isinstance(out.get("type"), list) else [out.get("type")]
-        ):
-            hint = f"At most {int(limit * 0.8)} characters."
-            out["description"] = f"{out['description']} {hint}" if out.get("description") else hint
+        hints = []
+        if isinstance(node.get("maxLength"), int):
+            hints.append(f"At most {int(node['maxLength'] * 0.8)} characters.")
+        if isinstance(node.get("maxItems"), int):
+            hints.append(f"At most {node['maxItems']} items.")
+        for branch in node.get("anyOf", []) if isinstance(node.get("anyOf"), list) else []:
+            if isinstance(branch, dict) and isinstance(branch.get("maxLength"), int):
+                hints.append(f"At most {int(branch['maxLength'] * 0.8)} characters.")
+        if hints:
+            text = " ".join(hints)
+            out["description"] = f"{out['description']} {text}" if out.get("description") else text
         if out.get("type") == "object" and "properties" in out:
             out["required"] = list(out["properties"])
             out["additionalProperties"] = False
