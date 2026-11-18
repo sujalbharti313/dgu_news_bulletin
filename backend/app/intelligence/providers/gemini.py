@@ -152,6 +152,8 @@ class GeminiProvider:
             response_json_schema=request.json_schema,
             max_output_tokens=request.max_output_tokens,
             thinking_config=thinking,
+            # No tools are sent; turning automatic function calling off also stops the SDK's per-call log line.
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
     @staticmethod

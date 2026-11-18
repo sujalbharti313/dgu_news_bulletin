@@ -165,3 +165,19 @@ def test_run_limit_defers_the_rest():
     runner, _ = make_runner(clusters(FOUR), provider, settings=ai_settings(ai_max_stories_per_run=2))
     report = runner.run()
     assert report.counts["deferred_by_run_limit"] == 2 and len(provider.requests) == 2
+
+
+def test_run_limit_goes_to_stories_with_the_most_text_and_thin_ones_do_not_use_it():
+    from app.intelligence.evidence import build_evidence
+    from tests.intelligence_helpers import THIN_ITEM
+
+    provider = FakeProvider(grounded)
+    runner, store = make_runner(
+        clusters([THIN_ITEM, POLICY, PAPER]), provider, settings=ai_settings(ai_max_stories_per_run=1)
+    )
+    report = runner.run()
+    assert len(provider.requests) == 1 and report.counts["deferred_by_run_limit"] == 1
+    assert report.counts["insufficient_evidence"] == 1  # checked without a request, outside the limit
+    sent = provider.requests[0].messages[1].content
+    richest = max(clusters([POLICY, PAPER]), key=lambda c: build_evidence(c).word_count)
+    assert richest.title in sent
