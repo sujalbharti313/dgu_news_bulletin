@@ -4,6 +4,7 @@ from app.api.v1.endpoints import (
     admin_ingestion,
     admin_intelligence,
     admin_processing,
+    admin_ranking,
     catalogue,
     editions,
     health,
@@ -18,3 +19,4 @@ api_router.include_router(catalogue.router)
 api_router.include_router(admin_ingestion.router)
 api_router.include_router(admin_processing.router)
 api_router.include_router(admin_intelligence.router)
+api_router.include_router(admin_ranking.router)

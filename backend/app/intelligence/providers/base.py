@@ -90,3 +90,26 @@ class IntelligenceProvider(Protocol):
     async def check_model(self, model: str) -> str: ...
 
     async def aclose(self) -> None: ...
+
+
+@dataclass(frozen=True)
+class EmbeddingRequest:
+    """One batch of texts to embed. Each text gets its own vector (never one aggregated vector)."""
+
+    model: str
+    texts: list[str]
+    dimensions: int
+
+
+@dataclass(frozen=True)
+class EmbeddingResponse:
+    vectors: list[list[float]]
+    model: str
+
+
+class EmbeddingProvider(Protocol):
+    name: str
+
+    async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse: ...
+
+    async def aclose(self) -> None: ...

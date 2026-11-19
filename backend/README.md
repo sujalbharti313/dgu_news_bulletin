@@ -1,19 +1,21 @@
-# AI//CAMPUS backend (Phases 2, 3.1, 3.2 and 3.3)
+# AI//CAMPUS backend (Phases 2, 3.1, 3.2, 3.3 and 3.4)
 
 A public, read-only REST API for the AI//CAMPUS bulletin, backed by Supabase PostgreSQL, plus (Phase 3.1)
 automated news ingestion from RSS/Atom feeds and the TLDR AI newsletter via Gmail (Phase 3.1), and news
 processing, deduplication and story clustering (Phase 3.2), and AI analysis of each story with Google Gemini
-(Phase 3.3). See [News ingestion](#news-ingestion-phase-31),
-[News processing](#news-processing-and-deduplication-phase-32) and
-[AI intelligence engine](#ai-intelligence-engine-phase-33).
+(Phase 3.3), and semantic verification and editorial ranking with Gemini embeddings and pgvector (Phase 3.4).
+See [News ingestion](#news-ingestion-phase-31),
+[News processing](#news-processing-and-deduplication-phase-32),
+[AI intelligence engine](#ai-intelligence-engine-phase-33) and
+[Semantic verification and ranking](#semantic-verification-and-editorial-ranking-phase-34).
 FastAPI · Pydantic v2 · SQLAlchemy 2 · psycopg 3 · Alembic · httpx · feedparser · google-genai · pytest.
 
 The backend is independent of the Next.js frontend: it lives in `backend/`, has its own dependencies,
 and deploys to any Python host. The frontend talks to it only through `NEXT_PUBLIC_API_BASE_URL`.
 
-> **Status of the live database:** the Supabase project has migrations up to `0003` and the reference data.
-> Migrations `0004` (no-op placeholder) and `0005` (Phase 3.3 tables) have been tested against a local
-> PostgreSQL 16 only; apply them with `alembic upgrade head` before running the intelligence engine.
+> **Status of the live database:** the Supabase project has migrations up to `0005` and the reference data.
+> Migration `0006` (Phase 3.4: pgvector, embeddings, verification and ranking tables) has been tested against a
+> local PostgreSQL 16 with pgvector only; apply it with `alembic upgrade head` before running the ranking engine.
 
 ---
 
@@ -39,10 +41,11 @@ backend/
 │   ├── ingestion/            Phase 3.1: sources, SSRF guard, HTTP client, providers, parsers, store, runner
 │   ├── processing/           Phase 3.2: normalisation, deduplication, story clusters, Stage 3.3 contract
 │   ├── intelligence/         Phase 3.3: Gemini analysis, validation, priority, free-tier quota, Stage 3.4 contract
+│   ├── ranking/              Phase 3.4: embeddings, semantic retrieval, editorial evaluation, scores, gates, shortlist
 │   └── seed/                 Seed runner + JSON fixtures exported from the frontend's data files
-├── config/                   ingestion_sources.toml (feeds, newsletters), intelligence_categories.toml
+├── config/                   ingestion_sources.toml, intelligence_categories.toml, ranking.toml, source_registry.toml
 ├── migrations/               Alembic environment and versioned migrations
-├── scripts/                  seed.py, ingest.py, process.py, intelligence.py, gmail_oauth.py, export_frontend_fixtures.mjs
+├── scripts/                  seed.py, ingest.py, process.py, intelligence.py, rank.py, gmail_oauth.py, export_frontend_fixtures.mjs
 ├── tests/                    pytest suite (API, constraints, migrations, contract, seed, config)
 ├── alembic.ini · pyproject.toml · requirements*.txt · Dockerfile · .env.example
 ```
@@ -91,6 +94,7 @@ All settings are read from the environment or `backend/.env` (run commands from 
 | `TEST_DATABASE_URL` | unset | Tests only. Must be a local database whose name contains `test`. |
 | `INGESTION_*`, `GMAIL_*` | see below | Phase 3.1 ingestion. See [Ingestion settings](#ingestion-settings). |
 | `PROCESSING_*` | see below | Phase 3.2 thresholds. See [Similarity thresholds](#similarity-thresholds). |
+| `EMBEDDING_*`, `RANKING_*` | see below | Phase 3.4. See [Free tier only](#free-tier-only). |
 
 Never put any of these in the frontend. The only frontend variable is `NEXT_PUBLIC_API_BASE_URL`.
 
@@ -880,6 +884,176 @@ If the old `story_intelligence` table still exists, 0005 leaves it alone; drop i
 - Number checks are textual: a number that is in the evidence but used in the wrong context is not caught.
 - `expires_at` is recorded but rows are not purged automatically (cleanup belongs to a later stage).
 
+## Semantic verification and editorial ranking (Phase 3.4)
+
+Stage 3.4 reads the Stage 3.2 story clusters and the Stage 3.3 analyses for one edition week and decides which
+stories deserve a place in the bulletin. It understands stories by meaning, not by keywords: every story gets a
+Gemini embedding stored in Supabase (pgvector), related stories are found by cosine similarity in the database,
+and one Gemini editorial evaluation per story judges novelty, impact, student value, evidence, hype and how the
+story relates to the related ones. Code then verifies, caps, scores, gates and picks a diversity-aware shortlist
+of up to 10 stories. It publishes nothing and deletes nothing. Stage 3.5 reads the result.
+
+Verification is evidence-based, not a fact check: it measures what the collected sources support. No web search
+or outside source is used (`externalCorroboration: "unavailable"`, `externallyFactChecked: false`).
+
+### Pipeline
+
+1. Candidates: clusters collected in the week with a current, valid Stage 3.3 analysis. Missing, out-of-date,
+   failed or quota-limited analyses are listed as `pending`; stories with too little text are `excluded`.
+2. Semantic representation (`embeddings.py`): headline, main event, what is new, summary, technical explanation,
+   who is involved and the article excerpt, with a fixed task prefix. Deterministic.
+3. Embedding cache: a SHA-256 of the text, model, dimension and representation version. Unchanged stories are
+   never embedded again; a change of content, `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS` or version re-embeds.
+4. Gemini embeddings (`EMBEDDING_MODEL`, default `gemini-embedding-2`, 768 dimensions), batched, paced, with
+   bounded retries. Every vector is checked (count, size, finite, non-zero) and L2-normalised.
+5. Stored in `story_embeddings.embedding vector(768)`.
+6. Retrieval: the SQL function `match_story_embeddings` returns up to `retrieval_limit` stories with cosine
+   similarity at least `related_threshold`, collected in the week or the `lookback_days` before it, same model and
+   version, never the story itself, only stories with a usable analysis. Bounded to 50 rows.
+7. Editorial evaluation (`semantic.py`): one Gemini request (`AI_MODEL`) with the sources, the Stage 3.3 analysis
+   to check, and the related stories. Strict JSON schema; unknown fields, out-of-range scores, unknown ids,
+   missing related verdicts, URLs, truncation and refusals are rejected, with at most `AI_MAX_REPAIR_ATTEMPTS`
+   repairs. Cached per input (analysis, related set, prompt version, model).
+8. Verification (`verification.py`, `credibility.py`, `corroboration.py`): source credibility from the registry,
+   independent corroboration (syndicated copies and press-release rewrites are not independent), claim checks,
+   headline/summary support, conflicts, evidence quality capped by what was actually collected.
+9. Scores (`scoring.py`), gates (`gates.py`, `duplicates.py`), ranking and shortlist (`shortlist.py`).
+10. Everything is saved: `story_embeddings`, `story_verifications` (one row per story, including technical holds
+    with their retry state) and `ranking_runs`.
+
+| Module | Job |
+| --- | --- |
+| `app/ranking/config.py` | Loads and validates `config/ranking.toml` and `config/source_registry.toml` |
+| `window.py` | Edition weeks: Monday to Sunday in Asia/Kolkata (`previous`, `current` or a date) |
+| `embeddings.py` | Semantic representation, content hash, vector validation, batched quota-aware embedding |
+| `semantic.py` | The Gemini editorial evaluation: prompt, schema, validation, retries |
+| `credibility.py`, `corroboration.py`, `verification.py` | Evidence-based verification |
+| `scoring.py`, `gates.py`, `duplicates.py`, `shortlist.py` | Scores, quality gates, same-event groups, shortlist |
+| `store.py`, `runner.py`, `service.py` | Postgres and in-memory stores, the run lock, entry points for Stage 3.5 |
+
+### Final score
+
+`final = 0.20 impact + 0.20 technical significance + 0.20 student relevance + 0.15 evidence quality + 0.15 source
+credibility + 0.10 timeliness`, computed in code and rounded half-up to one decimal. The model supplies only the
+semantic judgements for impact, technical novelty and student relevance (each with an explanation); code caps them
+for weak evidence, significant or mild hype, unverified benchmarks and single unknown sources (each cap listed in
+`finalScores.adjustments`) and the model cannot set the final score. Classes: 85+ Exceptional, 70+ High,
+55+ Medium, 40+ Low, otherwise Very Low. Every stored result records the dimension scores, the final score, the
+explanations and `rankingConfigVersion` (version plus a hash of the file).
+
+### Statuses
+
+| Eligibility | Meaning |
+| --- | --- |
+| `eligible` | Passed every gate; may be shortlisted |
+| `review_required` | An admin must look first (reason codes in `gates`) |
+| `ineligible` | Not for this edition (reason codes in `gates`); kept for inspection |
+| `pending` | Technical hold, not an editorial decision: embedding or evaluation waiting for quota or failed. Retried later (attempts and next attempt time are stored); `--retry-failed` retries now |
+
+A run is `completed` only when nothing is pending; otherwise it is `incomplete` and lists why. Stage 3.5 should
+read the latest completed run (`latest_ranking(...)` or `GET /runs/latest`).
+
+### Quality gates
+
+| Gate | Default action |
+| --- | --- |
+| `missing_source` (no valid article URL), `unclear_publisher` | review required |
+| `insufficient_evidence` (evidence below 35; below 20 or Stage 3.3 "insufficient" is ineligible) | review required |
+| `severe_inconsistency` (consistency below 40, or a contradicted claim, headline, summary or related report) | review required |
+| `unverified_major_claim` (impact 70+ with evidence below 60 from one non-primary account) | review required |
+| `misleading_claims` (significant hype and an overstated or unsupported headline) | review required |
+| `low_technical_substance` (technical 20 or less and impact 35 or less) | ineligible |
+| `duplicate_event` (same event as a stronger story this week, see below) | ineligible |
+| `previously_shortlisted` (same event as a story shortlisted in an earlier edition) | review required |
+| `out_of_window` (published outside the week; late arrivals exempt) | ineligible |
+| `unknown_single_source`, `analysis_needs_review`, `instruction_like_text` | review required |
+
+Two clusters are the same event when they share a paper identifier or article URL, or when the evaluation judged
+them `same_event` AND their similarity is at least `same_event_min_similarity`. Similarity alone never decides it.
+
+### Shortlist
+
+Only `eligible` stories scoring at least 55 can be shortlisted, up to 10. At most 3 per category, 2 per
+organisation, 4 per development type and 2 per semantic topic (stories whose embeddings are at least
+`topic_similarity` apart), except Exceptional stories (85+). An unrepresented coverage group may replace the lowest
+pick within 8 points. If fewer stories qualify the shortlist is shorter; it is never padded with weak stories.
+
+### Free tier only
+
+Both models are used through the free Gemini API key; there is no paid fallback, no other provider and no local
+model. Embeddings are counted under `EMBEDDING_MODEL` and evaluations under `AI_MODEL` in the shared
+`ai_usage_daily` ledger, with per-minute pacing and per-day caps. When a quota is used up (a 429 quota error from
+Google or the local daily cap) requests stop at once, the waiting stories stay `pending`, an admin alert is logged
+and the next run resumes. Check the current free limits of both models in Google AI Studio and set
+`EMBEDDING_REQUESTS_PER_DAY` and `AI_REQUESTS_PER_DAY` at or below them.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `EMBEDDING_MODEL` | `gemini-embedding-2` | Gemini embedding model. Never switched silently: `gemini-embedding-001` is a manual choice |
+| `EMBEDDING_DIMENSIONS` | `768` | Requested vector size. Must match the database column (checked before every run) |
+| `EMBEDDING_REQUESTS_PER_MINUTE` / `EMBEDDING_REQUESTS_PER_DAY` | `30` / `500` | Local pacing and daily cap (one per text) |
+| `EMBEDDING_BATCH_SIZE` | `16` | Texts per embedding call (at most 100) |
+| `EMBEDDING_MAX_INPUT_CHARS` | `6000` | Longest representation sent |
+| `RANKING_MAX_EVALUATIONS_PER_RUN` | `40` | Most evaluations per run (highest Stage 3.3 priority first) |
+| `RANKING_MAX_ATTEMPTS` | `3` | Attempts for a story whose embedding or evaluation keeps failing |
+| `RANKING_CONFIG_FILE` / `SOURCE_REGISTRY_FILE` | `config/ranking.toml` / `config/source_registry.toml` | Weights, thresholds, gates, shortlist; reviewed sources |
+| `RANKING_RETENTION_DAYS` | `30` | Expiry recorded on verification rows (no automatic purge) |
+
+Similarity thresholds live in `[semantic]` in `config/ranking.toml`. They are starting values: after the first
+real runs, use `python -m scripts.rank similar <cluster-id>` on known same-event and different-event pairs and
+adjust them.
+
+### Running
+
+```bash
+alembic upgrade head                            # migration 0006 (enables pgvector)
+python -m scripts.rank check                    # configuration, models, thresholds (no DB, no calls)
+python -m scripts.rank dry-run --week current   # rank; ranking results are not stored (embeddings are cached)
+python -m scripts.rank run                      # rank last week (Mon-Sun, Asia/Kolkata) and store it
+python -m scripts.rank run --retry-failed       # retry failed embeddings/evaluations now
+python -m scripts.rank similar <cluster-id>     # nearest stored stories, for threshold tuning
+python -m scripts.rank show --all               # latest stored ranking
+python -m scripts.rank runs                     # recent runs
+```
+
+Exit codes: 0 completed (or skipped because another run holds the lock), 1 incomplete or failed during the run,
+2 could not start (configuration, schema, dimension mismatch or key). Re-running on unchanged inputs sends no
+Gemini request and updates the same run. With `INGESTION_ADMIN_TOKEN` set, the token-protected admin endpoints are
+`POST /api/v1/admin/ranking/runs?week=`, `GET /runs/latest`, `GET /runs` and `GET /verifications`; they are not in
+the public OpenAPI schema and cannot change a score.
+
+### Security
+
+- Source text and related stories go to Gemini only inside a random-boundary data block; the system prompt says
+  this data cannot change the instructions, scoring rules, output format or criteria, cannot authorise any action
+  and cannot reveal anything. Instruction-like text is reported and gates the story for review.
+- Keys stay server-side and are never logged; errors carry safe messages only.
+- New tables have RLS on and no policies (no public access). `match_story_embeddings` is `SECURITY INVOKER` with a
+  fixed `search_path`, and `EXECUTE` is revoked from `PUBLIC`, `anon` and `authenticated`. All parameters are bound.
+- Scores are computed server-side; no endpoint can change them.
+
+### Database changes (migration 0006)
+
+| Change | Why |
+| --- | --- |
+| `CREATE EXTENSION vector` in the `extensions` schema (Supabase's default; free) | pgvector |
+| `story_embeddings` (one row per analysed story, `vector(768)`, model, version, content hash, collection times) | Embedding cache and retrieval |
+| `match_story_embeddings(...)` | Exact cosine search with filters and a hard limit |
+| `story_verifications` (one row per story) | Verification, scores, eligibility, gates, explanation, related stories, embedding and evaluation state |
+| `ranking_runs` (one row per edition week and input set) | Status, totals, config versions, shortlist and the full result JSON |
+
+There is no approximate (HNSW/IVFFlat) index: with a few hundred stories an exact scan is fast and exact. Add one in
+a later migration if the table grows to many thousands of rows. The run lock is an `ingestion_jobs` row with
+`job_type = 'verification'`. The downgrade drops the function and the three tables and leaves the extension.
+
+### Limitations
+
+- Verification compares the story with the collected sources only.
+- Thresholds are starting values and need tuning on real data.
+- The model's judgements can be wrong; caps, gates and admin review limit the damage, and every judgement is stored
+  with its explanation.
+- Tests use a scripted fake Gemini and deterministic fake embeddings, not live models.
+
 ## Connecting the frontend
 
 1. Run the API (`uvicorn app.main:app --port 8000`) with `CORS_ORIGINS` including the frontend origin.
@@ -927,9 +1101,10 @@ Consider `DOCS_ENABLED=false` in production if you do not want the schema public
 Implemented: schema, migrations, public read API, keyword search, safe seed, tests, docs (Phase 2);
 RSS/Atom and Gmail (TLDR AI) ingestion into a temporary staging table, scheduling, admin trigger (Phase 3.1);
 normalisation, exact/near-duplicate detection, story clustering with provenance and the Stage 3.3 contract (Phase 3.2);
-Gemini analysis, summaries, explanations, categories and preliminary priority with free-tier controls (Phase 3.3).
-Not implemented (Phase 3.4+): credibility verification, final ranking and weekly selection, editorial workflow, edition
-generation, publishing (which will require authorised human approval), embeddings and semantic or
-conversational search, audio generation. `ingestion_jobs`, the
+Gemini analysis, summaries, explanations, categories and preliminary priority with free-tier controls (Phase 3.3);
+Gemini embeddings in pgvector, semantic retrieval, editorial evaluation, verification, final scores, quality gates
+and the diversity-aware weekly shortlist (Phase 3.4).
+Not implemented (Phase 3.5+): editorial workflow, edition generation, publishing (which will require authorised
+human approval), semantic or conversational search for readers, audio generation, the frontend for these stages. `ingestion_jobs`, the
 `in_review`/`rejected` story states, `summary_origin`, `canonical_url` and the `mode` field of search
 responses are the hooks those phases will use.
