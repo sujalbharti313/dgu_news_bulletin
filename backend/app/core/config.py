@@ -130,21 +130,6 @@ class Settings(BaseSettings):
     # Analyses are working data for Stage 3.4, not an archive; they record this expiry (no automatic purge).
     intelligence_retention_days: int = Field(default=30, ge=1, le=365)
 
-    # --- Stage 3.4 verification and editorial ranking. Server-side only. ---
-    # Weights, thresholds, quality gates and diversity rules (validated TOML, relative to backend/).
-    ranking_config_file: str = "config/ranking.toml"
-    # Reviewed source classifications used for source credibility.
-    source_registry_file: str = "config/source_registry.toml"
-    # One Gemini consistency check per likely shortlist candidate (cached; same model, quota ledger and limits as
-    # Stage 3.3). false = rules only: no Gemini requests at all from Stage 3.4.
-    ranking_ai_check: bool = True
-    # At most this many consistency checks per ranking run (stories above the check threshold beyond this wait).
-    ranking_ai_max_checks_per_run: int = Field(default=20, ge=0, le=500)
-    # A story whose check keeps failing is retried at most this many times (then left for --retry-failed).
-    ranking_ai_max_attempts: int = Field(default=3, ge=1, le=10)
-    # Verification rows are working data for Stage 3.5; they record this expiry (no automatic purge).
-    ranking_retention_days: int = Field(default=30, ge=1, le=365)
-
     # Gmail API (OAuth 2.0, gmail.readonly). All three must be set or Gmail sources are skipped.
     gmail_client_id: str | None = None
     gmail_client_secret: SecretStr | None = None

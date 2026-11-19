@@ -4,7 +4,6 @@ from app.models.briefing import Briefing
 from app.models.edition import Edition
 from app.models.ingestion import IngestionItem, IngestionJob
 from app.models.intelligence import AiUsageDaily, StoryAnalysisRecord
-from app.models.ranking import RankingRun, StoryVerificationRecord
 from app.models.reference import CampusItem, CareerSignal, IndiaEntry
 from app.models.research import ResearchPaper
 from app.models.source import Source
@@ -20,11 +19,9 @@ __all__ = [
     "IndiaEntry",
     "IngestionItem",
     "IngestionJob",
-    "RankingRun",
     "ResearchPaper",
     "Source",
     "Story",
     "StoryAnalysisRecord",
-    "StoryVerificationRecord",
     "Tool",
 ]
