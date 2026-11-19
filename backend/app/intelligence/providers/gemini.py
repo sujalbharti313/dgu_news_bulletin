@@ -20,7 +20,14 @@ from typing import Any
 
 from app.core.config import Settings
 from app.intelligence.errors import IntelligenceConfigError
-from app.intelligence.providers.base import GenerationRequest, GenerationResponse, ProviderError, Usage
+from app.intelligence.providers.base import (
+    EmbeddingRequest,
+    EmbeddingResponse,
+    GenerationRequest,
+    GenerationResponse,
+    ProviderError,
+    Usage,
+)
 
 MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
 # Finish reasons that mean Gemini's own filters withheld the answer.
@@ -88,7 +95,8 @@ def classify_api_error(code: int | None, body: Any) -> ProviderError:
     if status == 404:
         return ProviderError(
             "model_unavailable",
-            "The configured Gemini model was not found or is no longer available (check AI_MODEL). "
+            "The configured Gemini model was not found or is no longer available (check AI_MODEL or "
+            "EMBEDDING_MODEL). "
             "No other model is used automatically.",
             status_code=404,
         )
@@ -246,3 +254,23 @@ class GeminiProvider:
             refusal=refusal,
             request_id=getattr(response, "response_id", None),
         )
+
+    async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        """Embeds a batch with the Gemini embedding API (batchEmbedContents under the hood).
+
+        Each text is wrapped in its own `Content`: for gemini-embedding-2 a plain list of strings would be merged
+        into ONE aggregated embedding. `task_type` is not sent (gemini-embedding-2 rejects it); the caller puts
+        the task instruction in the text. The vector count and size are checked by the caller as well."""
+        from google.genai import types
+
+        model = self._model(request.model)
+        contents = [types.Content(role="user", parts=[types.Part(text=text)]) for text in request.texts]
+        config = types.EmbedContentConfig(output_dimensionality=request.dimensions)
+        response = await self._guard(
+            self._client.aio.models.embed_content(model=model, contents=contents, config=config)
+        )
+        try:
+            vectors = [[float(v) for v in (e.values or [])] for e in (response.embeddings or [])]
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ProviderError("invalid_response", "Gemini returned an unreadable embedding response.") from exc
+        return EmbeddingResponse(vectors=vectors, model=model)

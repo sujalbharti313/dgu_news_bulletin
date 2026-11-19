@@ -130,6 +130,29 @@ class Settings(BaseSettings):
     # Analyses are working data for Stage 3.4, not an archive; they record this expiry (no automatic purge).
     intelligence_retention_days: int = Field(default=30, ge=1, le=365)
 
+    # --- Stage 3.4 verification and editorial ranking. Server-side only. ---
+    # Weights, thresholds, quality gates and diversity rules (validated TOML, relative to backend/).
+    ranking_config_file: str = "config/ranking.toml"
+    # Reviewed source classifications used for source credibility.
+    source_registry_file: str = "config/source_registry.toml"
+    # Gemini embeddings (free tier; same GEMINI_API_KEY). Exact model id; no automatic fallback model.
+    embedding_model: str = "gemini-embedding-2"
+    # Requested vector size. Must equal the story_embeddings column size (768 in migration 0006); every returned
+    # vector is checked against it, and a run refuses to start if the database column differs.
+    embedding_dimensions: int = Field(default=768, ge=128, le=3072)
+    # Free-tier guards for the embedding model, counted per text in ai_usage_daily (Pacific quota day). Google
+    # does not publish fixed free-tier numbers for embeddings: keep these at or below what AI Studio shows.
+    embedding_requests_per_minute: int = Field(default=30, ge=0, le=10000)
+    embedding_requests_per_day: int = Field(default=500, ge=0, le=1_000_000)
+    embedding_batch_size: int = Field(default=16, ge=1, le=100)
+    embedding_max_input_chars: int = Field(default=6000, ge=500, le=30000)
+    # One Gemini editorial evaluation per story (AI_MODEL, Stage 3.3 limits and ledger), cached per input.
+    ranking_max_evaluations_per_run: int = Field(default=40, ge=0, le=500)
+    # A story whose embedding or evaluation keeps failing is retried at most this many times (then --retry-failed).
+    ranking_max_attempts: int = Field(default=3, ge=1, le=10)
+    # Verification rows are working data for Stage 3.5; they record this expiry (no automatic purge).
+    ranking_retention_days: int = Field(default=30, ge=1, le=365)
+
     # Gmail API (OAuth 2.0, gmail.readonly). All three must be set or Gmail sources are skipped.
     gmail_client_id: str | None = None
     gmail_client_secret: SecretStr | None = None

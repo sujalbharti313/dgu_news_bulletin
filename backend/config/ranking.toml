@@ -1,0 +1,197 @@
+# Stage 3.4 verification and editorial ranking configuration.
+#
+# Every number the ranking engine uses lives here, so changes are reviewed in git rather than buried in code.
+# `version` is stored with every verification and ranking run: bump it whenever you change anything below, so
+# results computed under different rules are never mixed up. The file is validated strictly at start-up
+# (weights must sum to 1, thresholds must be ordered, unknown keys are rejected).
+
+version = "3.4.2"
+
+# --- Final editorial score -------------------------------------------------------------------------------
+# Final score = sum(dimension score x weight). Every dimension is 0-100, so the final score is 0-100.
+# A dimension that cannot be assessed (for example timeliness with no known date) contributes 0 and is listed
+# in `unavailable_dimensions`; nothing is guessed.
+[weights]
+global_impact = 0.20
+technical_significance = 0.20
+student_relevance = 0.20
+evidence_quality = 0.15
+source_credibility = 0.15
+timeliness = 0.10
+
+# Lower bound (inclusive) of each priority class. Scores below the last bound are "Very Low".
+[classification]
+exceptional = 85
+high = 70
+medium = 55
+low = 40
+
+# --- Timeliness (Asia/Kolkata, Monday 00:00 to Sunday 23:59:59) --------------------------------------------
+[timeliness]
+timezone = "Asia/Kolkata"
+# Published inside the edition week: 100 on the last day, minus this per day before the end of the week.
+in_window_daily_decay = 2
+# Published up to `late_arrival_days` before the week started (a story that broke just before Monday).
+late_arrival_days = 3
+late_arrival_score = 70
+# Older than that: still shown to the admin, with a low score and an out-of-window flag.
+stale_days = 14
+stale_score = 35
+very_stale_days = 30
+very_stale_score = 10
+# Only a newsletter date is known (the date a newsletter mentioned the article, not its publication date).
+newsletter_date_cap = 80
+
+# --- Semantic retrieval (Gemini embeddings in pgvector, cosine similarity) --------------------------------
+# Starting values for gemini-embedding-2 at 768 dimensions. Similarity is a retrieval signal only: it picks
+# which stories Gemini compares, and it never proves two stories are the same event or that a claim is true.
+# Tune with `python -m scripts.rank similar <cluster id>` after a few real weeks.
+[semantic]
+# Related stories are looked up in the edition week plus this many days before it (for follow-ups).
+lookback_days = 28
+# At most this many related stories per story are retrieved and shown to Gemini.
+retrieval_limit = 6
+# Minimum cosine similarity for a story to be retrieved as related.
+related_threshold = 0.70
+# Two stories are treated as the same event only if Gemini says so AND their similarity is at least this.
+same_event_min_similarity = 0.80
+# Shortlisted stories at least this similar count as the same topic for the max_per_topic diversity rule.
+topic_similarity = 0.86
+
+# --- Caps the code applies to the AI's dimension scores (each is listed in finalScores.adjustments) ---------
+[caps]
+# Evidence quality ceilings from facts the code can check itself.
+no_article_text_evidence = 30
+missing_url_evidence = 20
+stage3_insufficient_evidence = 30
+stage3_partial_evidence = 70
+# Evidence quality loses this per unsupported, contradicted or uncited claim, at most max_claim_penalty.
+claim_problem_penalty = 8
+max_claim_penalty = 24
+# Impact is capped when the evidence is weak, or when the only account is from an unknown source.
+weak_evidence_below = 40
+weak_evidence_impact = 60
+single_unknown_source_impact = 55
+# Hype judged "significant" by the evaluation caps impact and technical significance; "mild" caps technical.
+significant_hype_impact = 65
+significant_hype_technical = 55
+mild_hype_technical = 75
+
+# Source credibility score for each credibility level (see config/source_registry.toml).
+[credibility]
+primary = 85
+established = 75
+provisional = 55
+aggregator = 45
+unknown = 40
+low = 15
+# Added for each further independent publisher (corroboration), at most `max_corroboration_bonus`.
+corroboration_bonus = 5
+max_corroboration_bonus = 10
+# A newsletter summary linking to a registry-known site scores at most the site's score minus this.
+newsletter_penalty = 10
+
+# --- Quality gates ---------------------------------------------------------------------------------------
+# action: "review_required" keeps a story out of the automatic shortlist until an admin looks at it;
+# "ineligible" keeps it out of this edition. Nothing is ever deleted. Technical failures (embedding or
+# evaluation errors, quota) are not gates: those stories are "pending" and retried, never rejected.
+[gates.missing_source]
+# No valid original article URL.
+enabled = true
+action = "review_required"
+
+[gates.unclear_publisher]
+# No source in the story has an identifiable publisher or site.
+enabled = true
+action = "review_required"
+
+[gates.insufficient_evidence]
+enabled = true
+action = "review_required"
+min_evidence_quality = 35
+# Below this the story is ineligible rather than review_required.
+ineligible_below = 20
+
+[gates.severe_inconsistency]
+# Claim consistency below this, or a headline, summary or claim the sources contradict.
+enabled = true
+action = "review_required"
+min_claim_consistency = 40
+
+[gates.unverified_major_claim]
+# A major claim (impact at or above major_impact_score) with evidence below min_evidence_quality and no
+# independent corroboration. Not applied when the single account is a primary source or a reviewed
+# established publication (the scoring caps apply instead).
+enabled = true
+action = "review_required"
+major_impact_score = 70
+min_evidence_quality = 60
+
+[gates.misleading_claims]
+# The evaluation found significant hype AND an overstated or unsupported headline.
+enabled = true
+action = "review_required"
+
+[gates.low_technical_substance]
+# Technical significance at or below max_technical AND impact at or below max_impact: little to report.
+enabled = true
+action = "ineligible"
+max_technical = 20
+max_impact = 35
+
+[gates.duplicate_event]
+# The same event as a stronger story this week (Gemini said same event, similarity >= same_event_min_similarity).
+enabled = true
+action = "ineligible"
+
+[gates.previously_shortlisted]
+# The same event as a story shortlisted in an earlier edition (it may be a follow-up: an admin decides).
+enabled = true
+action = "review_required"
+
+[gates.out_of_window]
+# Published before the week (beyond late_arrival_days) or after it.
+enabled = true
+action = "ineligible"
+
+[gates.unknown_single_source]
+enabled = true
+action = "review_required"
+
+[gates.analysis_needs_review]
+# Stage 3.3 marked the analysis needs_review.
+enabled = true
+action = "review_required"
+
+[gates.instruction_like_text]
+# A source contains text addressed to an AI (reported by Stage 3.3 or the evaluation). Ignored as data, but an
+# admin should look before the story is used.
+enabled = true
+action = "review_required"
+
+# --- Diversity-aware shortlist ---------------------------------------------------------------------------
+[shortlist]
+target = 10
+# Stories below this final score are never shortlisted, even when the shortlist is not full.
+min_score = 55
+max_per_category = 3
+max_per_organisation = 2
+# At most this many stories of the same Stage 3.3 development type (release, funding, policy, ...).
+max_per_development_type = 4
+# At most this many stories on one topic (pairwise similarity >= semantic.topic_similarity).
+max_per_topic = 2
+# Stories at or above this score are kept even when their category or organisation cap is reached.
+exceptional_score = 85
+# An unrepresented coverage group may replace the lowest non-exceptional pick when within this many points.
+coverage_swap_margin = 8
+
+# Coverage groups the shortlist tries to represent (by Stage 3.3 primary or secondary category key).
+[shortlist.coverage_groups]
+research = ["ai-research"]
+model_releases = ["ai-model-releases"]
+industry = ["industry-business"]
+tools = ["ai-tools-development"]
+india = ["india-ai"]
+robotics_hardware = ["robotics-automation", "ai-infrastructure-hardware"]
+safety_governance = ["ai-safety-governance"]
+education_careers = ["ai-education-careers"]

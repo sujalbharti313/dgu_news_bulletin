@@ -88,7 +88,8 @@ class CampusItemKind(StrEnum):
 
 class IngestionJobType(StrEnum):
     """SOURCE_FETCH (RSS/Atom) and NEWSLETTER_IMPORT (Gmail) are used by Phase 3.1, STORY_PROCESSING by
-    Phase 3.2, SUMMARISATION by Phase 3.3 (one AI analysis run); VERIFICATION is reserved."""
+    Phase 3.2, SUMMARISATION by Phase 3.3 (one AI analysis run), VERIFICATION by Stage 3.4 (one verification
+    and ranking run)."""
 
     SOURCE_FETCH = "source_fetch"
     NEWSLETTER_IMPORT = "newsletter_import"
@@ -153,3 +154,42 @@ class AnalysisStatus(StrEnum):
     # Not analysed because the free quota (Google's, or the configured daily limit) ran out. Not counted as an
     # attempt; picked up again automatically after the quota resets.
     QUOTA_LIMITED = "quota_limited"
+
+
+class VerificationStatus(StrEnum):
+    """Per-story state of the Stage 3.4 engine (one `story_verifications` row per cluster)."""
+
+    # Embedded, evaluated by Gemini, scored and gated: has a final score and an editorial eligibility.
+    COMPLETED = "completed"
+    # Technical hold-ups, never editorial decisions (eligibility `pending`). Retried on a later run.
+    PENDING_EMBEDDING = "pending_embedding"
+    PENDING_EVALUATION = "pending_evaluation"
+    EMBEDDING_FAILED = "embedding_failed"
+    EVALUATION_FAILED = "evaluation_failed"
+    # Stage 3.3 produced no usable analysis (too little source text); kept as ineligible for inspection.
+    INSUFFICIENT_INPUT = "insufficient_input"
+
+
+class EligibilityStatus(StrEnum):
+    ELIGIBLE = "eligible"
+    REVIEW_REQUIRED = "review_required"
+    INELIGIBLE = "ineligible"
+    # Not yet decided because of a technical hold-up (see VerificationStatus); never shortlisted meanwhile.
+    PENDING = "pending"
+
+
+class EmbeddingStatus(StrEnum):
+    COMPLETED = "completed"
+    PENDING = "pending"
+    QUOTA_LIMITED = "quota_limited"
+    FAILED = "failed"
+    INVALID_OUTPUT = "invalid_output"
+    NOT_APPLICABLE = "not_applicable"
+
+
+class RankingRunStatus(StrEnum):
+    # Every story in the window was evaluated; the shortlist is final for this configuration.
+    COMPLETED = "completed"
+    # Some stories are still pending (not analysed, analysis out of date, embedding or evaluation waiting).
+    INCOMPLETE = "incomplete"
+    FAILED = "failed"
