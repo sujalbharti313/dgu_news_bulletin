@@ -88,7 +88,8 @@ class CampusItemKind(StrEnum):
 
 class IngestionJobType(StrEnum):
     """SOURCE_FETCH (RSS/Atom) and NEWSLETTER_IMPORT (Gmail) are used by Phase 3.1, STORY_PROCESSING by
-    Phase 3.2, SUMMARISATION by Phase 3.3 (one AI analysis run); VERIFICATION is reserved."""
+    Phase 3.2, SUMMARISATION by Phase 3.3 (one AI analysis run), VERIFICATION by Stage 3.4 (one verification
+    and ranking run)."""
 
     SOURCE_FETCH = "source_fetch"
     NEWSLETTER_IMPORT = "newsletter_import"
@@ -153,3 +154,30 @@ class AnalysisStatus(StrEnum):
     # Not analysed because the free quota (Google's, or the configured daily limit) ran out. Not counted as an
     # attempt; picked up again automatically after the quota resets.
     QUOTA_LIMITED = "quota_limited"
+
+
+class VerificationStatus(StrEnum):
+    """Per-story state of the Stage 3.4 verification engine (one `story_verifications` row per cluster)."""
+
+    # Verification finished (rules, plus the Gemini consistency check where it applied).
+    COMPLETED = "completed"
+    # The AI consistency check is needed but waits for the free quota. Never eligible until it runs.
+    PENDING_AI_CHECK = "pending_ai_check"
+    # The AI consistency check failed (outage, invalid output). Retried on a later run; never eligible meanwhile.
+    AI_CHECK_FAILED = "ai_check_failed"
+    # Stage 3.3 produced no usable analysis (too little source text); kept as ineligible for inspection.
+    INSUFFICIENT_INPUT = "insufficient_input"
+
+
+class EligibilityStatus(StrEnum):
+    ELIGIBLE = "eligible"
+    REVIEW_REQUIRED = "review_required"
+    INELIGIBLE = "ineligible"
+
+
+class RankingRunStatus(StrEnum):
+    # Every story in the window was evaluated; the shortlist is final for this configuration.
+    COMPLETED = "completed"
+    # Some stories are still pending (not analysed, analysis out of date, AI check waiting for quota).
+    INCOMPLETE = "incomplete"
+    FAILED = "failed"
