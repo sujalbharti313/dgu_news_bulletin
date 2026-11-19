@@ -1,19 +1,20 @@
-# AI//CAMPUS backend (Phases 2, 3.1, 3.2 and 3.3)
+# AI//CAMPUS backend (Phases 2, 3.1, 3.2, 3.3 and 3.4)
 
 A public, read-only REST API for the AI//CAMPUS bulletin, backed by Supabase PostgreSQL, plus (Phase 3.1)
 automated news ingestion from RSS/Atom feeds and the TLDR AI newsletter via Gmail (Phase 3.1), and news
 processing, deduplication and story clustering (Phase 3.2), and AI analysis of each story with Google Gemini
-(Phase 3.3). See [News ingestion](#news-ingestion-phase-31),
-[News processing](#news-processing-and-deduplication-phase-32) and
-[AI intelligence engine](#ai-intelligence-engine-phase-33).
+(Phase 3.3), and verification with a final editorial ranking for each weekly edition (Phase 3.4). See
+[News ingestion](#news-ingestion-phase-31), [News processing](#news-processing-and-deduplication-phase-32),
+[AI intelligence engine](#ai-intelligence-engine-phase-33) and
+[Verification and ranking](#verification-and-smart-ranking-phase-34).
 FastAPI · Pydantic v2 · SQLAlchemy 2 · psycopg 3 · Alembic · httpx · feedparser · google-genai · pytest.
 
 The backend is independent of the Next.js frontend: it lives in `backend/`, has its own dependencies,
 and deploys to any Python host. The frontend talks to it only through `NEXT_PUBLIC_API_BASE_URL`.
 
-> **Status of the live database:** the Supabase project has migrations up to `0003` and the reference data.
-> Migrations `0004` (no-op placeholder) and `0005` (Phase 3.3 tables) have been tested against a local
-> PostgreSQL 16 only; apply them with `alembic upgrade head` before running the intelligence engine.
+> **Status of the live database:** the Supabase project has migrations up to `0005` and the reference data.
+> Migration `0006` (Phase 3.4 tables) has been tested against a local PostgreSQL 16 only; apply it with
+> `alembic upgrade head` before running the ranking engine.
 
 ---
 
@@ -39,10 +40,11 @@ backend/
 │   ├── ingestion/            Phase 3.1: sources, SSRF guard, HTTP client, providers, parsers, store, runner
 │   ├── processing/           Phase 3.2: normalisation, deduplication, story clusters, Stage 3.3 contract
 │   ├── intelligence/         Phase 3.3: Gemini analysis, validation, priority, free-tier quota, Stage 3.4 contract
+│   ├── ranking/              Phase 3.4: verification, final scores, quality gates, shortlist, Stage 3.5 contract
 │   └── seed/                 Seed runner + JSON fixtures exported from the frontend's data files
-├── config/                   ingestion_sources.toml (feeds, newsletters), intelligence_categories.toml
+├── config/                   ingestion_sources.toml, intelligence_categories.toml, ranking.toml, source_registry.toml
 ├── migrations/               Alembic environment and versioned migrations
-├── scripts/                  seed.py, ingest.py, process.py, intelligence.py, gmail_oauth.py, export_frontend_fixtures.mjs
+├── scripts/                  seed.py, ingest.py, process.py, intelligence.py, rank.py, gmail_oauth.py, export_frontend_fixtures.mjs
 ├── tests/                    pytest suite (API, constraints, migrations, contract, seed, config)
 ├── alembic.ini · pyproject.toml · requirements*.txt · Dockerfile · .env.example
 ```
@@ -880,6 +882,125 @@ If the old `story_intelligence` table still exists, 0005 leaves it alone; drop i
 - Number checks are textual: a number that is in the evidence but used in the wrong context is not caught.
 - `expires_at` is recorded but rows are not purged automatically (cleanup belongs to a later stage).
 
+## Verification and smart ranking (Phase 3.4)
+
+Stage 3.4 reads the Stage 3.2 story clusters and the Stage 3.3 analyses for one edition week, checks how well
+each story is supported, gives it a final editorial score, applies quality gates and picks a diversity-aware
+shortlist of up to about 10 stories. It publishes nothing and deletes nothing: every story gets a stored score,
+a status (`eligible`, `review_required` or `ineligible`) and a plain-language explanation. Stage 3.5 reads the
+result.
+
+Verification is evidence-based, not a fact check: it measures what the collected sources support. Every result
+carries `externallyFactChecked: false`.
+
+### Architecture
+
+| Module | Job |
+| --- | --- |
+| `app/ranking/config.py` | Loads and validates `config/ranking.toml` and `config/source_registry.toml` |
+| `window.py` | Edition weeks: Monday to Sunday in Asia/Kolkata (`previous`, `current` or a date) |
+| `credibility.py` | Source credibility from the registry, the source's Stage 3.1 category, or `unknown` |
+| `corroboration.py` | Independent corroboration; syndicated copies and repeated announcements do not count |
+| `verification.py`, `text.py` | Evidence quality (0–100), claim consistency, technical substance, hype signals |
+| `ai_check.py` | Optional Gemini consistency check of the Stage 3.3 headline, summary and claims against the sources |
+| `scoring.py` | Timeliness and the weighted final score, with caps for weak evidence and hype |
+| `gates.py`, `duplicates.py` | The quality gates and same-event detection across clusters |
+| `shortlist.py` | Ranking, the diversity-aware shortlist and the explanations |
+| `store.py`, `runner.py`, `service.py` | Postgres and in-memory stores, the run lock, entry points for Stage 3.5 |
+
+### Final score
+
+`final = 0.20 impact + 0.20 technical + 0.20 student relevance + 0.15 evidence quality + 0.15 source credibility
++ 0.10 timeliness`, rounded half-up to one decimal. Classes: 85+ Exceptional, 70+ High, 55+ Medium, 40+ Low,
+otherwise Very Low. Weights, classes, caps, gate thresholds and shortlist rules are all in `config/ranking.toml`;
+the loader rejects weights that do not sum to 1 and classes that are not strictly decreasing. Every run records
+`rankingConfigVersion` (version plus a hash of the file) so a change to the file is visible in the output.
+
+The AI scores from Stage 3.3 are adjusted by the evidence: impact is capped when evidence is weak, when the claim
+is only marketing, or when only one unknown source reports it; technical significance is averaged with the
+measured technical substance and capped for unverified benchmarks and heavy hype. Each adjustment is listed in
+`finalScores.adjustments`.
+
+### Source registry
+
+`config/source_registry.toml` lists reviewed sources by domain or Stage 3.1 source key with a kind and a level
+(`primary`, `established`, `provisional`, `aggregator`, `low`). It is not a reputation list: a source that is not
+in it is `unknown`, which lowers the credibility score but never marks the story false. Newsletters such as TLDR
+AI are aggregators; a linked original article is credited at its own level minus a small penalty.
+
+### Quality gates
+
+| Gate | Default action |
+| --- | --- |
+| `missing_source` (no valid article URL) | ineligible |
+| `insufficient_evidence` (evidence below 35; below 20 is ineligible) | review required |
+| `severe_inconsistency` (consistency below 40, or a contradicted claim, headline or summary) | review required |
+| `duplicate_event` (the same event as a stronger cluster) | ineligible |
+| `out_of_window` (published outside the week; late arrivals exempt) | ineligible |
+| `unverified_major_claim` (impact 70+ with evidence below 60, unless a primary or established source) | review required |
+| `unknown_single_source`, `analysis_needs_review`, `instruction_like_text`, `verification_incomplete` | review required |
+
+Only `eligible` stories can be shortlisted, and only with a score of at least 55. The shortlist allows at most 3
+stories per category and 2 per organisation, except Exceptional stories; it may swap in a story from an
+unrepresented coverage group (research, model releases, industry, tools, India, robotics and hardware, safety and
+governance, education and careers) if it is within 8 points. If fewer stories qualify the shortlist is shorter,
+and the result says so.
+
+### Optional Gemini consistency check (free)
+
+With `RANKING_AI_CHECK=true` (the default) each likely shortlist candidate gets one Gemini check with the same
+model, API key, `ai_usage_daily` ledger and per-minute/per-day limits as Stage 3.3. The check can only make a
+story more cautious (it never raises a score). It is cached per story and re-sent only when the analysis or the
+configuration changes. When the quota is used up, requests stop at once and the run is `incomplete` with those
+stories waiting; nothing paid is ever used. `RANKING_AI_CHECK=false` ranks with the rules only.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `RANKING_CONFIG_FILE` | `config/ranking.toml` | Weights, thresholds, gates, shortlist rules |
+| `SOURCE_REGISTRY_FILE` | `config/source_registry.toml` | Reviewed source classifications |
+| `RANKING_AI_CHECK` | `true` | Gemini consistency check on or off |
+| `RANKING_AI_MAX_CHECKS_PER_RUN` | `20` | Most checks sent in one run |
+| `RANKING_AI_MAX_ATTEMPTS` | `3` | Retries for a story whose check keeps failing |
+| `RANKING_RETENTION_DAYS` | `30` | Expiry recorded on verification rows (no automatic purge) |
+
+### Running
+
+```bash
+alembic upgrade head                        # migration 0006
+python -m scripts.rank check                # validate the configuration and the schema
+python -m scripts.rank dry-run --week current   # rank, store nothing
+python -m scripts.rank run                  # rank last week (Mon–Sun, Asia/Kolkata) and store it
+python -m scripts.rank run --week 2026-11-09 --no-ai
+python -m scripts.rank show --all           # latest stored ranking
+python -m scripts.rank runs                 # recent runs
+```
+
+Exit codes: 0 completed (or skipped because another run holds the lock), 1 incomplete or failed during the run, 2 could not start (configuration, schema or key). Re-running on unchanged
+inputs reuses the stored run. With `INGESTION_ADMIN_TOKEN` set, the token-protected admin endpoints are
+`POST /api/v1/admin/ranking/runs?week=`, `GET /runs/latest`, `GET /runs` and `GET /verifications`; they are
+not in the public OpenAPI schema and cannot change a score.
+
+A run is `completed` only when every story in the week has a current Stage 3.3 analysis and every needed AI check
+is done; otherwise it is `incomplete` and lists what is pending. Stage 3.5 should read the latest completed run
+(`latest_ranking(...)` or `GET /runs/latest`).
+
+### Database changes (migration 0006)
+
+| Change | Why |
+| --- | --- |
+| `ranking_runs` (one row per edition week and input set) | Edition window, status, totals, config versions, the shortlist ids and the full result JSON |
+| `story_verifications` (one row per cluster) | Verification JSON, dimension scores, final score, class, eligibility, gates, explanation, cached AI check state |
+| CHECK constraints on scores (0–100) and statuses; RLS on, no policies; `updated_at` triggers | Same rules as every other table |
+
+The run lock is an `ingestion_jobs` row with `job_type = 'verification'`. The downgrade drops both tables.
+
+### Limitations
+
+- Verification only compares the story with the collected sources; it does not check facts elsewhere.
+- Hype, substance and claim support use text heuristics, so wording can mislead them.
+- The registry starts small; unknown sources score lower until they are reviewed and added.
+- Tests use a scripted fake Gemini, not a live model.
+
 ## Connecting the frontend
 
 1. Run the API (`uvicorn app.main:app --port 8000`) with `CORS_ORIGINS` including the frontend origin.
@@ -927,8 +1048,9 @@ Consider `DOCS_ENABLED=false` in production if you do not want the schema public
 Implemented: schema, migrations, public read API, keyword search, safe seed, tests, docs (Phase 2);
 RSS/Atom and Gmail (TLDR AI) ingestion into a temporary staging table, scheduling, admin trigger (Phase 3.1);
 normalisation, exact/near-duplicate detection, story clustering with provenance and the Stage 3.3 contract (Phase 3.2);
-Gemini analysis, summaries, explanations, categories and preliminary priority with free-tier controls (Phase 3.3).
-Not implemented (Phase 3.4+): credibility verification, final ranking and weekly selection, editorial workflow, edition
+Gemini analysis, summaries, explanations, categories and preliminary priority with free-tier controls (Phase 3.3);
+verification, final editorial ranking, quality gates and a diversity-aware weekly shortlist (Phase 3.4).
+Not implemented (Phase 3.5+): editorial workflow and approval, edition
 generation, publishing (which will require authorised human approval), embeddings and semantic or
 conversational search, audio generation. `ingestion_jobs`, the
 `in_review`/`rejected` story states, `summary_origin`, `canonical_url` and the `mode` field of search

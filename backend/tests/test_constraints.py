@@ -162,5 +162,5 @@ def test_row_level_security_is_enabled_on_every_table(db_session):
             "WHERE n.nspname = 'public' AND c.relkind = 'r'"
         )
     ).all()
-    assert len(rows) == 14  # thirteen tables plus alembic_version
+    assert len(rows) == 16  # fifteen tables plus alembic_version
     assert all(enabled for _, enabled in rows), rows
