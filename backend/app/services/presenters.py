@@ -55,6 +55,8 @@ def edition_out(edition: Edition) -> EditionOut:
         week_end=edition.week_end,
         published_at=edition.published_at,
         provenance=provenance(edition.is_demo),
+        introduction=edition.introduction,
+        editorial_note=edition.editorial_note,
     )
 
 

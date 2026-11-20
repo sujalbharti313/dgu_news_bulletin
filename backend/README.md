@@ -1,21 +1,23 @@
-# AI//CAMPUS backend (Phases 2, 3.1, 3.2, 3.3 and 3.4)
+# AI//CAMPUS backend (Phases 2 to 3.5)
 
 A public, read-only REST API for the AI//CAMPUS bulletin, backed by Supabase PostgreSQL, plus (Phase 3.1)
 automated news ingestion from RSS/Atom feeds and the TLDR AI newsletter via Gmail (Phase 3.1), and news
 processing, deduplication and story clustering (Phase 3.2), and AI analysis of each story with Google Gemini
-(Phase 3.3), and semantic verification and editorial ranking with Gemini embeddings and pgvector (Phase 3.4).
+(Phase 3.3), semantic verification and editorial ranking with Gemini embeddings and pgvector (Phase 3.4), and
+weekly edition generation with human review, approval and publishing (Phase 3.5).
 See [News ingestion](#news-ingestion-phase-31),
 [News processing](#news-processing-and-deduplication-phase-32),
 [AI intelligence engine](#ai-intelligence-engine-phase-33) and
-[Semantic verification and ranking](#semantic-verification-and-editorial-ranking-phase-34).
+[Semantic verification and ranking](#semantic-verification-and-editorial-ranking-phase-34) and
+[Weekly editions](#weekly-editions-generation-review-approval-and-publishing-phase-35).
 FastAPI · Pydantic v2 · SQLAlchemy 2 · psycopg 3 · Alembic · httpx · feedparser · google-genai · pytest.
 
 The backend is independent of the Next.js frontend: it lives in `backend/`, has its own dependencies,
 and deploys to any Python host. The frontend talks to it only through `NEXT_PUBLIC_API_BASE_URL`.
 
-> **Status of the live database:** the Supabase project has migrations up to `0005` and the reference data.
-> Migration `0006` (Phase 3.4: pgvector, embeddings, verification and ranking tables) has been tested against a
-> local PostgreSQL 16 with pgvector only; apply it with `alembic upgrade head` before running the ranking engine.
+> **Status of the live database:** the Supabase project has migrations up to `0006` (applied 2026-11-19).
+> Migration `0007` (Phase 3.5 weekly editions) has been tested against a local PostgreSQL 16 with pgvector only;
+> apply it with `alembic upgrade head` (see [Weekly editions](#weekly-editions-generation-review-approval-and-publishing-phase-35), Setup on Windows).
 
 ---
 
@@ -1054,6 +1056,195 @@ a later migration if the table grows to many thousands of rows. The run lock is 
   with its explanation.
 - Tests use a scripted fake Gemini and deterministic fake embeddings, not live models.
 
+## Weekly editions: generation, review, approval and publishing (Phase 3.5)
+
+Every Monday the previous week's edition is built from the Stage 3.4 ranking and waits for a human editor. Nothing
+reaches students until a signed-in editorial admin approves an exact revision and then publishes it.
+
+### Pipeline
+
+1. **Week.** Monday 00:00 to Sunday 23:59:59 in `Asia/Kolkata` (`config/edition.toml` `[schedule]`), stored as
+   UTC instants. The edition for a week becomes due on the following Monday at 06:00 local time.
+2. **Ranking.** The newest *completed* Stage 3.4 run for that week that finished after the week ended. If there is
+   none, the scheduler runs Stage 3.4 for the week first (`run_ranking_if_missing`). Mid-week rankings are never
+   used, so late stories are not missed.
+3. **Selection** (`app/editions/selection.py`). Up to `target_stories` (10) stories in Stage 3.4's shortlist order.
+   Only `eligible` stories, with no duplicates, and nothing published in an earlier edition. The edition is never
+   padded with weaker stories. Below `min_stories` (3) it is still generated, with a warning for the editor.
+4. **Story text** comes from the Stage 3.3 analysis. Source links come from the ingestion records, never from AI.
+5. **Composition** (`app/editions/compose.py`). One Gemini request (free tier, the Stage 3.3 model, with the same
+   daily ledger and pacing) writes the title, introduction and closing note, and tightens the wording of each story.
+   The answer must match a strict JSON schema, and validation then checks it:
+   - every story ref appears exactly once, and no story is invented;
+   - every number in a story's text appears in that story's input;
+   - there are no URLs, no markup and no text over the length limits;
+   - project ideas are never rewritten.
+
+   An invalid answer gets at most `AI_MAX_REPAIR_ATTEMPTS` repairs. After that, or with no key, the edition
+   uses the Stage 3.3 text with a factual introduction, and the editor sees a "not AI-composed" warning. When
+   the quota is used up, the edition waits for the reset instead of falling back to another model.
+6. **Revision 1** is stored. The edition becomes `review_required`, or `draft` if validation found errors.
+
+### States
+
+```
+generating → review_required | draft | generation_failed
+generation_failed → generating (automatic retry, max_attempts with backoff; or an admin's Regenerate)
+draft → review_required (Submit) | generating (Regenerate) | archived
+review_required → approved | rejected | draft (Return for changes) | generating
+approved → published | review_required (any edit removes the approval)
+rejected → draft (edit) | generating | archived
+published, archived: final (public pages show only published editions)
+```
+
+The client never sends a status. Each action is its own endpoint. The server checks the state machine, the
+`expectedRevision` the admin saw and, for approval, the SHA-256 of the exact content reviewed. It then locks
+the row (`SELECT … FOR UPDATE`). Approve and publish are idempotent: a repeat returns `alreadyApproved` or
+`alreadyPublished` and writes nothing. Publishing creates the public `stories` rows from the approved revision
+in one transaction.
+
+### Data (migration 0007)
+
+- `editions` now has the workflow status, current, approved and published revision, approver, publisher,
+  generation attempts and errors, and the ranking run. Check constraints guarantee that publication uses the
+  approved revision.
+- `edition_revisions` holds append-only, numbered content snapshots with their hash, issues and diff.
+- `edition_items` holds the stories of the current revision, with a foreign key to `story_analyses`.
+- `edition_audit_log` is append-only. It records generated, opened for review, edited, story added, removed or
+  reordered, approved, approval invalidated, rejected, published, publish failed, regenerated and archived.
+  Each entry has the actor and revision.
+- `editorial_admins` is the allow-list of Supabase Auth users.
+- RLS is enabled on all of them, and the `anon` and `authenticated` roles have no privileges. Triggers block
+  UPDATE, DELETE and TRUNCATE on revisions and audit.
+
+### Admin sign-in and security
+
+- `/admin` on the frontend signs in with **Supabase Auth** (email + password, free). The browser holds only the
+  project URL and the *publishable* key.
+- Every admin API call sends the access token as a Bearer header. The backend verifies the token with Supabase
+  (`GET /auth/v1/user`, cached for `ADMIN_AUTH_CACHE_SECONDS`) and then requires an active `editorial_admins`
+  row. Deactivating an admin takes effect immediately. The ingestion admin token does not work here.
+- Tokens are sent as a header, never as a cookie, so cross-site requests cannot act as an admin (no CSRF). CORS
+  allows `Authorization` and POST/PUT only on `/api/v1/admin/editions`, and only for `CORS_ORIGINS`.
+- Writes are rate limited per admin (`ADMIN_WRITE_RATE_PER_MINUTE`, default 30). Admin responses are
+  `Cache-Control: no-store`. Errors use the standard safe JSON shape.
+- The admin API returns 404 unless `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` are set.
+
+### Free scheduler: GitHub Actions
+
+`.github/workflows/weekly-pipeline.yml` runs every day at 06:00 IST:
+
+- ingest, process, analyse, rank the current week;
+- then `python -m scripts.edition scheduled`.
+
+A second run on Monday at 15:00 IST retries only the edition step. The scheduler is idempotent: a week that
+already has an edition is skipped, and failed weeks are retried after the backoff. Up to `catch_up_weeks`
+missed weeks (since `start_week`) are recovered, and the status of each run is recorded in `ingestion_jobs`
+and on the edition.
+
+GitHub Actions minutes are free and unlimited for public repositories, and this repository is public. That
+also means run logs are public. They contain only counts, statuses and public headlines, and secrets are
+masked. GitHub can delay scheduled runs, and it disables schedules after 60 days without repository activity.
+It emails a warning first, and you re-enable the workflow under **Actions**.
+
+### Cost (₹0)
+
+- About one Gemini request per week for composition, plus up to one repair, plus one more per admin
+  Regenerate. This comes out of the existing free daily budget (`AI_REQUESTS_PER_DAY`) through the same ledger.
+- Supabase Auth, the database, GitHub Actions on a public repository and Vercel Hobby are all free.
+- There is no paid fallback model.
+
+### Setup on Windows (PowerShell, in `C:\Users\SUJAL\Documents\dgu_news_bulletin\backend`)
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+git fetch origin; git checkout claude/project-thread-e1udzw; git pull
+pip install -r requirements.txt
+
+# 1. Database: apply migration 0007
+alembic upgrade head
+alembic current            # expect: 0007 (head)
+
+# 2. Check the configuration and schedule
+python -m scripts.edition check
+```
+
+3. **Create your editor account.** In Supabase, go to Authentication, then Users, then Add user. Choose
+   "Create new user", enter your email and a strong password, and tick "Auto confirm". Then run:
+
+   ```powershell
+   python -m scripts.edition admins add you@example.com --name "Your Name"
+   python -m scripts.edition admins list
+   ```
+
+   In Authentication, then Sign In / Providers, you can turn off "Allow new users to sign up". Only invited
+   editors need accounts.
+4. **Public Supabase values.** In Project Settings, then API, copy the Project URL and the *publishable* key
+   (`sb_publishable_…`). Never use the secret or `service_role` key here. Add them to `backend\.env`:
+
+   ```
+   SUPABASE_URL=https://YOUR-PROJECT-REF.supabase.co
+   SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+   ```
+
+   Add them to the frontend's `.env.local` too, as `NEXT_PUBLIC_SUPABASE_URL` and
+   `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`.
+5. **Try it locally.**
+   - Run `uvicorn app.main:app --port 8000` in `backend`.
+   - Run `npm run dev` in the repository root, with `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000` in
+     `.env.local`.
+   - Open http://localhost:3000/admin.
+   - To build an edition now for a finished week: `python -m scripts.edition generate --week previous`.
+6. **Scheduler.** On GitHub, open the repository's Settings, then Secrets and variables, then Actions, and add
+   these repository secrets:
+   - `DATABASE_URL` (the session pooler URI);
+   - `GEMINI_API_KEY`;
+   - optionally `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` and `GMAIL_REFRESH_TOKEN`.
+
+   After merging, open the **Actions** tab. You can start "AI//CAMPUS pipeline" by hand with "Run workflow".
+
+### Deployment of the API (free)
+
+The admin pages need the API on a public URL. One free option is a **second Vercel project** with Root
+Directory `backend`. It uses `api/index.py`, `vercel.json` and `.vercelignore`. Set these environment
+variables on it:
+
+- `APP_ENV=production`
+- `DATABASE_URL`: the transaction pooler, port 6543
+- `DB_USE_NULL_POOL=true`
+- `CORS_ORIGINS=https://<frontend domain>`
+- `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY`
+- `GEMINI_API_KEY`, used only by Regenerate
+
+Then set `NEXT_PUBLIC_API_BASE_URL` and the two `NEXT_PUBLIC_SUPABASE_*` values on the frontend project and
+redeploy it.
+
+Vercel functions stop after 60 seconds. Generation therefore runs in GitHub Actions, and Regenerate from the
+admin page uses one short Gemini attempt. Render's free web service, with the Dockerfile, also works, but it
+sleeps when idle. These deployment files have not been tried on a live Vercel account.
+
+### Commands
+
+```
+python -m scripts.edition check | scheduled | status | show 2026-w47
+python -m scripts.edition generate --week previous|YYYY-MM-DD [--force]
+python -m scripts.edition admins list | add EMAIL [--name N] [--user-id UUID] | deactivate EMAIL
+```
+
+`scheduled` and `generate` exit with 0 when everything is fine (including "nothing due" and "waiting for
+quota"), 1 when a generation failed and 2 for a configuration error.
+
+### Limitations
+
+- There is no "unpublish" or withdraw action yet; `withdrawn` is reserved. To correct a published edition,
+  edit the `stories` rows directly.
+- Story images are not generated. Published stories have no `explore` or `disciplines` when Stage 3.3 gave none,
+  and the public pages hide empty answers.
+- The Gmail token in Google "Testing" mode expires every 7 days. Ingestion then skips TLDR until you run
+  `python -m scripts.gmail_oauth` again.
+- Admin-triggered generation runs inside the request. A very slow Gemini answer can hit the host's time limit,
+  and the edition then stays retryable.
+
 ## Connecting the frontend
 
 1. Run the API (`uvicorn app.main:app --port 8000`) with `CORS_ORIGINS` including the frontend origin.
@@ -1104,7 +1295,8 @@ normalisation, exact/near-duplicate detection, story clustering with provenance 
 Gemini analysis, summaries, explanations, categories and preliminary priority with free-tier controls (Phase 3.3);
 Gemini embeddings in pgvector, semantic retrieval, editorial evaluation, verification, final scores, quality gates
 and the diversity-aware weekly shortlist (Phase 3.4).
-Not implemented (Phase 3.5+): editorial workflow, edition generation, publishing (which will require authorised
-human approval), semantic or conversational search for readers, audio generation, the frontend for these stages. `ingestion_jobs`, the
-`in_review`/`rejected` story states, `summary_origin`, `canonical_url` and the `mode` field of search
-responses are the hooks those phases will use.
+Weekly edition generation from the Stage 3.4 ranking, Gemini composition with strict validation, revisions, audit
+log, Supabase Auth editorial admins, review/approve/reject/publish workflow, GitHub Actions scheduler and the
+`/admin` pages (Phase 3.5).
+Not implemented (Phase 3.6+): unpublishing, semantic or conversational search for readers, audio generation,
+image generation.

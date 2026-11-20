@@ -157,3 +157,68 @@ body {
   from { opacity: 0; transform: translateY(16px) scale(0.98); }
   to { opacity: 1; transform: none; }
 }
+
+/* ── Editorial admin pages (/admin) ── */
+@layer components {
+  .btn-primary,
+  .btn-secondary,
+  .btn-danger {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-radius: 999px;
+    padding: 0.55rem 1.1rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    transition: background-color 150ms, color 150ms, border-color 150ms, opacity 150ms;
+  }
+  .btn-primary {
+    background: var(--dbs-purple);
+    color: var(--dbs-white);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--dbs-deep);
+  }
+  .btn-secondary {
+    border: 1px solid rgb(101 23 106 / 0.3);
+    background: var(--dbs-white);
+    color: var(--dbs-purple);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    border-color: var(--dbs-purple);
+  }
+  .btn-danger {
+    border: 1px solid var(--dbs-ink);
+    background: var(--dbs-white);
+    color: var(--dbs-ink);
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: var(--dbs-ink);
+    color: var(--dbs-white);
+  }
+  .btn-primary:disabled,
+  .btn-secondary:disabled,
+  .btn-danger:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+  .field-label {
+    display: block;
+    margin-bottom: 0.35rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--dbs-ink);
+  }
+  .field {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--dbs-white);
+    padding: 0.6rem 0.8rem;
+    color: var(--dbs-ink);
+    line-height: 1.5;
+  }
+  .field:focus-visible {
+    outline-color: var(--dbs-purple);
+  }
+}

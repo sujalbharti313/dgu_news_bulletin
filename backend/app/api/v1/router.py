@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
+    admin_editions,
     admin_ingestion,
     admin_intelligence,
     admin_processing,
@@ -20,3 +21,4 @@ api_router.include_router(admin_ingestion.router)
 api_router.include_router(admin_processing.router)
 api_router.include_router(admin_intelligence.router)
 api_router.include_router(admin_ranking.router)
+api_router.include_router(admin_editions.router)

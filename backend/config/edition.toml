@@ -1,0 +1,50 @@
+# Stage 3.5 weekly edition generation. Server-side configuration (read by the backend and the scheduler only).
+# Change it with a pull request; `python -m scripts.edition check` validates it.
+
+[schedule]
+# The bulletin's time zone. Weeks run Monday 00:00 to Sunday 23:59:59 in this zone (stored as UTC instants).
+timezone = "Asia/Kolkata"
+# The edition for a week is generated on this weekday after the week ends (0 = Monday ... 6 = Sunday),
+# at or after this local time. The scheduler may run more often; it only acts once a week is due.
+generation_weekday = 0
+generation_time = "06:00"
+# Missed runs: also generate the edition for up to this many earlier weeks that have none (0 = only the
+# last complete week). An edition is never generated for a week that has not ended yet.
+catch_up_weeks = 1
+# Editions are never generated for weeks starting before this Monday (the first AI//CAMPUS live week), so
+# turning the scheduler on does not back-fill old weeks.
+start_week = "2026-11-16"
+# The edition uses the latest COMPLETED Stage 3.4 ranking made after the week ended (a ranking made while the
+# week was still being collected is not final). If there is none, run Stage 3.4 for that week first.
+run_ranking_if_missing = true
+
+[selection]
+# Up to this many stories, taken in order from Stage 3.4's diversity-aware shortlist (eligible stories only).
+# Fewer are used when the shortlist is shorter: the edition is never padded with weaker stories.
+target_stories = 10
+# Below this many shortlisted stories the edition is still generated, but flagged for the admin.
+min_stories = 3
+
+[generation]
+# Automatic retries of a failed generation (each scheduler run retries once, after the backoff).
+max_attempts = 4
+retry_backoff_minutes = 60
+# Gemini composes the title, introduction, closing note and tightens each story's wording (one request, plus
+# at most AI_MAX_REPAIR_ATTEMPTS repairs). When Gemini cannot be used (no key, invalid answers) the edition
+# is built from the Stage 3.3 text unchanged. When the free quota is used up, generation waits for the reset.
+use_ai = true
+fallback_to_stage33_text = true
+max_output_tokens = 8192
+
+[limits]
+# Hard limits enforced on generated and admin-edited text (characters).
+title = 120
+introduction = 1200
+editorial_note = 600
+headline = 200
+summary = 600
+technical_explanation = 1800
+why_it_matters = 900
+student_relevance = 900
+project_idea = 500
+review_note = 1000

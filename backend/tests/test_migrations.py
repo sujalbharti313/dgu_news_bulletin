@@ -41,7 +41,7 @@ def test_upgrade_downgrade_upgrade_and_no_drift(scratch_url):
     with eng.connect() as conn:
         diff = compare_metadata(MigrationContext.configure(conn, opts={"compare_type": True}), Base.metadata)
         assert diff == [], diff
-        assert conn.scalar(text("SELECT version_num FROM alembic_version")) == "0006"
+        assert conn.scalar(text("SELECT version_num FROM alembic_version")) == "0007"
     eng.dispose()
 
 
@@ -58,7 +58,7 @@ def test_upgrade_works_from_the_rolled_back_phase_3_3_state(scratch_url):
         conn.execute(text("UPDATE alembic_version SET version_num = '0004'"))
     command.upgrade(cfg, "head")
     with eng.connect() as conn:
-        assert conn.scalar(text("SELECT version_num FROM alembic_version")) == "0006"
+        assert conn.scalar(text("SELECT version_num FROM alembic_version")) == "0007"
         assert conn.scalar(text("SELECT count(*) FROM story_intelligence")) == 1  # untouched
         assert conn.scalar(text("SELECT to_regclass('story_analyses') IS NOT NULL"))
     rollback = os.path.join(BACKEND_DIR, "migrations", "rollback", "0004_drop_story_intelligence.sql")
@@ -66,7 +66,7 @@ def test_upgrade_works_from_the_rolled_back_phase_3_3_state(scratch_url):
         conn.connection.driver_connection.execute(fh.read())
         conn.commit()
     with eng.connect() as conn:
-        assert conn.scalar(text("SELECT version_num FROM alembic_version")) == "0006"
+        assert conn.scalar(text("SELECT version_num FROM alembic_version")) == "0007"
         assert not conn.scalar(text("SELECT to_regclass('story_intelligence') IS NOT NULL"))
         assert conn.scalar(text("SELECT to_regclass('story_analyses') IS NOT NULL"))
     eng.dispose()

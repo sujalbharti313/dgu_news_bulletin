@@ -59,7 +59,7 @@ export default async function StoryPage({ params }: Params) {
     { icon: Compass, label: "What to explore", body: story.impact.explore.join(" · ") },
     { icon: Hammer, label: "What you could build", body: story.impact.buildIdea },
     { icon: GraduationCap, label: "Relevant disciplines", body: story.impact.disciplines.join(" · ") },
-  ];
+  ].filter((entry) => entry.body.trim() !== ""); // live stories may not have every answer
 
   return (
     <main id="main">

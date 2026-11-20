@@ -33,9 +33,10 @@ export function StudentImpact({ stories }: { stories: Story[] }) {
   };
 
   const answers = [
-    { icon: Lightbulb, label: "Why should a student care?", body: <p>{story.impact.whyItMatters}</p> },
+    { icon: Lightbulb, label: "Why should a student care?", show: !!story.impact.whyItMatters, body: <p>{story.impact.whyItMatters}</p> },
     {
       icon: Compass,
+      show: story.impact.explore.length > 0,
       label: "What to explore",
       body: (
         <ul className="flex flex-wrap gap-2">
@@ -47,13 +48,14 @@ export function StudentImpact({ stories }: { stories: Story[] }) {
         </ul>
       ),
     },
-    { icon: Hammer, label: "What you could build", body: <p>{story.impact.buildIdea}</p> },
+    { icon: Hammer, label: "What you could build", show: !!story.impact.buildIdea, body: <p>{story.impact.buildIdea}</p> },
     {
       icon: GraduationCap,
+      show: story.impact.disciplines.length > 0,
       label: "Relevant disciplines",
       body: <p>{story.impact.disciplines.join(" · ")}</p>,
     },
-  ];
+  ].filter((answer) => answer.show); // live stories may not have every answer
 
   return (
     <section id="impact" aria-labelledby="impact-title" className="relative overflow-hidden bg-white py-24 sm:py-32">

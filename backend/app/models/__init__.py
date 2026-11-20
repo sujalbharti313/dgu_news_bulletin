@@ -2,6 +2,7 @@
 
 from app.models.briefing import Briefing
 from app.models.edition import Edition
+from app.models.editorial import EditionAuditEntry, EditionItem, EditionRevision, EditorialAdmin
 from app.models.ingestion import IngestionItem, IngestionJob
 from app.models.intelligence import AiUsageDaily, StoryAnalysisRecord
 from app.models.ranking import RankingRun, StoryEmbedding, StoryVerificationRecord
@@ -17,6 +18,10 @@ __all__ = [
     "CampusItem",
     "CareerSignal",
     "Edition",
+    "EditionAuditEntry",
+    "EditionItem",
+    "EditionRevision",
+    "EditorialAdmin",
     "IndiaEntry",
     "IngestionItem",
     "IngestionJob",

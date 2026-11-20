@@ -156,6 +156,23 @@ class Settings(BaseSettings):
     # Verification rows are working data for Stage 3.5; they record this expiry (no automatic purge).
     ranking_retention_days: int = Field(default=30, ge=1, le=365)
 
+    # --- Stage 3.5 weekly editions, admin review and publishing. Server-side only. ---
+    # Schedule, selection, generation and text limits (validated TOML, relative to backend/).
+    edition_config_file: str = "config/edition.toml"
+    # Supabase Auth, used only to verify an editorial admin's sign-in token (GET /auth/v1/user). The project
+    # URL and its publishable (anon) key are public values; no service-role key is ever used or needed.
+    # Unset = the admin editions API does not exist (404).
+    supabase_url: str | None = Field(
+        default=None, pattern=r"^(https://[A-Za-z0-9.-]+|http://(localhost|127\.0\.0\.1))(:\d{2,5})?$"
+    )
+    supabase_publishable_key: SecretStr | None = None
+    admin_auth_timeout_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
+    # A verified token is trusted for at most this long before Supabase is asked again (sign-out takes effect
+    # within this window). Admin rights (editorial_admins) are re-read from the database on every request.
+    admin_auth_cache_seconds: int = Field(default=60, ge=0, le=600)
+    # Admin write actions (save, approve, publish, regenerate) per admin per minute, per process.
+    admin_write_rate_per_minute: int = Field(default=30, ge=1, le=1000)
+
     # Gmail API (OAuth 2.0, gmail.readonly). All three must be set or Gmail sources are skipped.
     gmail_client_id: str | None = None
     gmail_client_secret: SecretStr | None = None
@@ -194,7 +211,20 @@ class Settings(BaseSettings):
         normalise_database_url(value.get_secret_value())  # raises ValueError on an unusable URL
         return value
 
-    @field_validator("ingestion_admin_token", "gmail_client_secret", "gmail_refresh_token", "gemini_api_key")
+    @field_validator("supabase_url", mode="before")
+    @classmethod
+    def _blank_url_is_unset(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip().rstrip("/") or None
+        return value
+
+    @field_validator(
+        "ingestion_admin_token",
+        "gmail_client_secret",
+        "gmail_refresh_token",
+        "gemini_api_key",
+        "supabase_publishable_key",
+    )
     @classmethod
     def _blank_secret_is_unset(cls, value: SecretStr | None) -> SecretStr | None:
         if value is None or not value.get_secret_value().strip():
@@ -237,6 +267,10 @@ class Settings(BaseSettings):
         if self.database_url is None:
             return None
         return normalise_database_url(self.database_url.get_secret_value())
+
+    @property
+    def admin_auth_configured(self) -> bool:
+        return bool(self.supabase_url and self.supabase_publishable_key)
 
     @property
     def gmail_configured(self) -> bool:

@@ -26,7 +26,10 @@ export function WeeklySignal({ edition, stories }: { edition: Edition; stories: 
                 The Signal<span className="text-yellow">.</span>
               </>
             }
-            intro="What happened in AI this week, why it matters, and where to read the original. Every story ends with something you can explore."
+            intro={
+              edition.introduction ||
+              "What happened in AI this week, why it matters, and where to read the original. Every story ends with something you can explore."
+            }
             aside={
               <p className="display text-outline hidden text-[11rem] leading-none text-purple/40 lg:block" aria-label={`Edition ${edition.number}`}>
                 {pad2(edition.number)}
@@ -68,6 +71,13 @@ export function WeeklySignal({ edition, stories }: { edition: Edition; stories: 
                     ))}
                   </Reveal>
                 </div>
+              )}
+
+              {edition.editorialNote && (
+                <p className="mt-16 max-w-3xl border-l-2 border-purple pl-5 leading-relaxed text-ink/80">
+                  <span className="eyebrow mb-2 block text-ink">From the editors</span>
+                  {edition.editorialNote}
+                </p>
               )}
             </>
           )}

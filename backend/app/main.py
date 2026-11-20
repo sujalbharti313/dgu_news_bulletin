@@ -4,7 +4,6 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 from app import __version__
@@ -13,6 +12,7 @@ from app.core.config import Settings, describe_database_target, get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.db.session import Database
+from app.middleware.cors import PathAwareCORS
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.middleware.request_context import RequestContextMiddleware
 
@@ -57,15 +57,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.add_middleware(RateLimitMiddleware, limit_per_minute=settings.rate_limit_per_minute)
     app.add_middleware(RequestContextMiddleware)
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.cors_origins,
-        allow_credentials=False,
-        allow_methods=["GET"],
-        allow_headers=["Accept", "Content-Type", "X-Request-ID"],
-        expose_headers=["X-Request-ID", "Retry-After"],
-        max_age=600,
-    )
+    app.add_middleware(PathAwareCORS, origins=settings.cors_origins)
     return app
 
 

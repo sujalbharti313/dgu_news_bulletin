@@ -4,7 +4,7 @@
 - Every request needs `Authorization: Bearer <INGESTION_ADMIN_TOKEN>` (compared in constant time).
 - Callers can only choose among configured source keys; no URL or query can be supplied.
 - One run at a time per process (409 otherwise); across processes the database allows one running job
-  per source. CORS stays GET-only, so browsers on other origins cannot call these routes.
+  per source. CORS only allows the configured frontend origins, and browsers never hold this token.
 - Nothing here publishes content.
 """
 
