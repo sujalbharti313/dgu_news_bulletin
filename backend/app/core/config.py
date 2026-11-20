@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     db_connect_timeout_seconds: int = Field(default=10, ge=1, le=60)
     # Applied per transaction with set_config(..., true), so it is safe behind a transaction pooler.
     db_statement_timeout_ms: int = Field(default=10_000, ge=0, le=120_000)
+    # Longer limit for the few large single writes (the ranking run's result document can be ~0.5 MB, which
+    # can take more than 10 s to upload and store over a slow home connection to the pooler).
+    db_large_write_timeout_ms: int = Field(default=180_000, ge=0, le=600_000)
     # None = decide from the URL (disabled for the transaction pooler, which cannot hold prepared statements).
     db_prepared_statements: bool | None = None
     # Let the external pooler own connections instead of SQLAlchemy. Recommended with the transaction pooler.

@@ -23,11 +23,15 @@ def db(engine):
 
     database = Database(make_settings())
     yield database
+    _clean(engine)
+    database.dispose()
+
+
+def _clean(engine):
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM story_verifications; DELETE FROM ranking_runs; DELETE FROM story_embeddings; "
                           "DELETE FROM story_analyses; DELETE FROM ai_usage_daily; "
                           "DELETE FROM ingestion_jobs WHERE source_key = 'stage-3.4-ranking'"))  # fmt: skip
-    database.dispose()
 
 
 def persisted(db, items):
@@ -168,3 +172,37 @@ def test_embedding_rows_reject_wrong_dimensions(db):
             "embedding_version, content_hash, input_chars, first_collected_at, last_collected_at, embedded_at) "
             "VALUES (gen_random_uuid(), 'r', '[1,2,3]', 'm', 3, 'v', 'h', 1, now(), now(), now())"
         ))  # fmt: skip
+
+
+def test_the_large_run_document_is_saved_with_the_longer_write_timeout(engine):
+    """A real run's result document is ~0.5 MB; over a slow connection its upsert outlived the 10 s default
+    statement timeout. save_run raises the limit for its own transaction only."""
+    from sqlalchemy import event
+
+    from app.db.session import Database
+    from tests.conftest import make_settings
+
+    db = Database(make_settings(db_statement_timeout_ms=10_000, db_large_write_timeout_ms=180_000))
+    seen: list[str] = []
+    try:
+        clusters, records = persisted(db, [PAPER])
+        runner, store = make_ranker(clusters, records, store=SqlRankingStore(db), ledger=SqlUsageLedger(db))
+
+        @event.listens_for(db.engine, "before_cursor_execute")
+        def capture(conn, cursor, statement, params, context, executemany):
+            if "set_config(" in statement:
+                seen.append(f"timeout {next(iter(params.values())) if isinstance(params, dict) else params[0]}")
+            elif statement.lstrip().startswith("INSERT INTO ranking_runs"):
+                seen.append("run insert")
+
+        report = runner.run(week=WEEK)
+        assert report.status == "completed", report.reason
+        with db.write_session() as s:
+            store.save_run(store.find_run(store.list_runs(limit=1)[0].run_key))
+            in_tx = s.execute(text("SHOW statement_timeout")).scalar()
+        assert in_tx == "10s"  # other transactions keep the default
+        inserts = [i for i, x in enumerate(seen) if x == "run insert"]
+        assert inserts and all(seen[i - 1] == "timeout 180000" for i in inserts)
+    finally:
+        _clean(engine)
+        db.dispose()
