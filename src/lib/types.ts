@@ -53,6 +53,12 @@ export interface Edition {
   title: string;
   weekOf: string; // ISO date, Monday of the edition week
   provenance: Provenance;
+  /** Live editions only: last day (Sunday) of the edition week. */
+  weekEnd?: string;
+  /** Live editions only: the approved editorial introduction. */
+  introduction?: string | null;
+  /** Live editions only: an optional closing note from the editors. */
+  editorialNote?: string | null;
 }
 
 export type ToolCategory =

@@ -71,7 +71,9 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def _api_error(request: Request, exc: ApiError) -> JSONResponse:
         if isinstance(exc, DatabaseUnavailableError):
             logger.warning("database unavailable", extra={"request_id": _request_id(request)})
-        return JSONResponse(error_body(exc.code, exc.message), status_code=exc.status_code)
+        return JSONResponse(
+            error_body(exc.code, exc.message, getattr(exc, "details", None)), status_code=exc.status_code
+        )
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:

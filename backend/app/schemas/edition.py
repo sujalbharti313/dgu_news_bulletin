@@ -15,6 +15,8 @@ class EditionOut(ApiModel):
     week_end: date
     published_at: datetime
     provenance: Provenance
+    introduction: str | None = None
+    editorial_note: str | None = None
 
 
 class EditionDetailOut(EditionOut):

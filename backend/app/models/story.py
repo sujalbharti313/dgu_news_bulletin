@@ -44,10 +44,11 @@ class Story(UUIDPrimaryKey, Timestamps, Base):
             "(image_url IS NOT NULL AND image_alt IS NOT NULL AND image_credit IS NOT NULL)",
             name="image_complete",
         ),
-        # A published story must be fully attributed and complete enough to render.
+        # A published story must be fully attributed and complete enough to render. A build idea is optional
+        # (Stage 3.5 only publishes one when Stage 3.3 produced a useful project idea).
         CheckConstraint(
             "status <> 'published' OR (published_at IS NOT NULL AND source_id IS NOT NULL "
-            "AND impact_why_it_matters IS NOT NULL AND impact_build_idea IS NOT NULL)",
+            "AND impact_why_it_matters IS NOT NULL)",
             name="published_complete",
         ),
         UniqueConstraint("edition_id", "edition_position"),

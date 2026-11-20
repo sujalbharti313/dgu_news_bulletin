@@ -89,7 +89,7 @@ class CampusItemKind(StrEnum):
 class IngestionJobType(StrEnum):
     """SOURCE_FETCH (RSS/Atom) and NEWSLETTER_IMPORT (Gmail) are used by Phase 3.1, STORY_PROCESSING by
     Phase 3.2, SUMMARISATION by Phase 3.3 (one AI analysis run), VERIFICATION by Stage 3.4 (one verification
-    and ranking run)."""
+    and ranking run), EDITION_GENERATION by Stage 3.5 (one weekly edition generation attempt)."""
 
     SOURCE_FETCH = "source_fetch"
     NEWSLETTER_IMPORT = "newsletter_import"
@@ -97,6 +97,8 @@ class IngestionJobType(StrEnum):
     STORY_PROCESSING = "story_processing"
     SUMMARISATION = "summarisation"
     VERIFICATION = "verification"
+    # Stage 3.5: one scheduled (or admin-triggered) weekly edition generation attempt.
+    EDITION_GENERATION = "edition_generation"
 
 
 class IngestionJobStatus(StrEnum):
@@ -193,3 +195,45 @@ class RankingRunStatus(StrEnum):
     # Some stories are still pending (not analysed, analysis out of date, embedding or evaluation waiting).
     INCOMPLETE = "incomplete"
     FAILED = "failed"
+
+
+class EditionStatus(StrEnum):
+    """Lifecycle of a weekly edition (Stage 3.5). Only PUBLISHED is ever served publicly.
+
+    Transitions are defined and enforced in app.editions.states; the database adds CHECKs for the invariants
+    (an approved edition records its approved revision, a published one its published revision)."""
+
+    GENERATING = "generating"
+    DRAFT = "draft"
+    REVIEW_REQUIRED = "review_required"
+    APPROVED = "approved"
+    PUBLISHED = "published"
+    GENERATION_FAILED = "generation_failed"
+    REJECTED = "rejected"
+    ARCHIVED = "archived"
+    # Kept for editions created before Stage 3.5 (the original Phase 2 vocabulary). Not reachable from 3.5.
+    WITHDRAWN = "withdrawn"
+
+
+class EditionAuditAction(StrEnum):
+    GENERATION_STARTED = "generation_started"
+    GENERATED = "generated"
+    GENERATION_FAILED = "generation_failed"
+    GENERATION_DEFERRED = "generation_deferred"
+    OPENED_FOR_REVIEW = "opened_for_review"
+    REVISION_CREATED = "revision_created"
+    STORY_ADDED = "story_added"
+    STORY_REMOVED = "story_removed"
+    STORY_REORDERED = "story_reordered"
+    CONTENT_EDITED = "content_edited"
+    APPROVAL_REQUESTED = "approval_requested"
+    APPROVED = "approved"
+    APPROVAL_INVALIDATED = "approval_invalidated"
+    APPROVAL_REJECTED = "approval_rejected"
+    REJECTED = "rejected"
+    RETURNED_FOR_REVISION = "returned_for_revision"
+    PUBLISHED = "published"
+    PUBLISH_FAILED = "publish_failed"
+    REGENERATED = "regenerated"
+    RETRY_TRIGGERED = "retry_triggered"
+    ARCHIVED = "archived"
