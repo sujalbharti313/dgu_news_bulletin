@@ -319,6 +319,10 @@ class SqlRankingStore:
             set_={f: stmt.excluded[f] for f in _R_FIELDS if f != "run_key"},
         ).returning(RankingRun.id)
         with self.db.write_session() as s:
+            # The run's result document is large; give this one transaction a longer statement timeout than the
+            # default (transaction-local, so it never affects other pooler clients).
+            timeout = self.db.settings.db_large_write_timeout_ms
+            s.execute(text("SELECT set_config('statement_timeout', :ms, true)"), {"ms": str(timeout)})
             return s.execute(stmt).scalar_one()
 
     def find_run(self, run_key):
