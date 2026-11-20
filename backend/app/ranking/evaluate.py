@@ -4,6 +4,7 @@ Pure: given the same cluster, analysis, Gemini evaluation, related stories, wind
 is the same.
 """
 
+import re
 import uuid
 from dataclasses import dataclass, field
 
@@ -69,11 +70,36 @@ class Evaluated:
         return sorted(out)
 
 
+HOSTING_KINDS = {"research_repository", "newsletter"}
+
+
+def _norm(name: str | None) -> str:
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+def hosting_platforms(cluster: StoryCluster) -> set[str]:
+    """Names of the platforms that carried the story (a preprint repository such as arXiv, a newsletter). They
+    host or relay other people's work, so they are not the organisation behind the development: two papers
+    from different labs on arXiv must not count as 'two stories about arXiv' for organisation diversity."""
+    out: set[str] = set()
+    for s in cluster.sources:
+        if s.source_kind in HOSTING_KINDS:
+            out |= {_norm(s.publisher), _norm(s.source_name)}
+            if s.site:
+                parts = s.site.lower().removeprefix("www.").split(".")
+                out.add(_norm(parts[-2] if len(parts) >= 2 else parts[0]))
+    out.discard("")
+    return out
+
+
 def organisation_of(cluster: StoryCluster, analysis: StoryAnalysis) -> str | None:
-    """Rule-detected organisation first (Stage 3.2 entities), else the first party Stage 3.3 named."""
-    if cluster.entities.organisations:
-        return cluster.entities.organisations[0]
-    return analysis.understanding.involved[0] if analysis.understanding.involved else None
+    """The organisation behind the development, for diversity: rule-detected organisations (Stage 3.2 entities)
+    first, then the parties Stage 3.3 named; hosting platforms are skipped. None when unknown (no cap applies)."""
+    platforms = hosting_platforms(cluster)
+    for name in [*cluster.entities.organisations, *analysis.understanding.involved]:
+        if name and _norm(name) and _norm(name) not in platforms:
+            return name
+    return None
 
 
 def coverage_groups(analysis: StoryAnalysis, config: RankingConfig) -> list[str]:

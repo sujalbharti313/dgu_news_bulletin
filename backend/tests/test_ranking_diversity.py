@@ -144,3 +144,22 @@ def test_same_semantic_topic_is_capped_by_embedding_similarity():
     selected, _ = shortlist(topic + [distinct])
     assert sum(1 for s in selected if s in topic) == cap
     assert distinct in selected
+
+
+def test_a_preprint_repository_is_not_the_organisation_behind_a_paper():
+    """Papers from different labs on arXiv are not 'stories about arXiv' for the organisation cap."""
+    from app.ranking.evaluate import organisation_of
+    from tests.ranking_helpers import analysis_of
+
+    clusters, records = analysed([PAPER])
+    cluster = clusters[0]
+    analysis = analysis_of(records, cluster)
+    tagged = cluster.model_copy(
+        update={"entities": cluster.entities.model_copy(update={"organisations": ["arXiv", "Example University"]})}
+    )
+    assert organisation_of(tagged, analysis) == "Example University"
+    only_platform = cluster.model_copy(
+        update={"entities": cluster.entities.model_copy(update={"organisations": ["arXiv"]})}
+    )
+    no_party = analysis.model_copy(update={"understanding": analysis.understanding.model_copy(update={"involved": []})})
+    assert organisation_of(only_platform, no_party) is None  # unknown: no organisation cap applies
