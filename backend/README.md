@@ -973,8 +973,8 @@ them `same_event` AND their similarity is at least `same_event_min_similarity`. 
 
 ### Shortlist
 
-Only `eligible` stories scoring at least 55 can be shortlisted, up to 10. At most 3 per category, 2 per
-organisation, 4 per development type and 2 per semantic topic (stories whose embeddings are at least
+Only `eligible` stories scoring at least 55 can be shortlisted, up to 10. At most 5 per category, 2 per
+organisation, 5 per development type and 2 per semantic topic (stories whose embeddings are at least
 `topic_similarity` apart), except Exceptional stories (85+). An unrepresented coverage group may replace the lowest
 pick within 8 points. If fewer stories qualify the shortlist is shorter; it is never padded with weak stories.
 

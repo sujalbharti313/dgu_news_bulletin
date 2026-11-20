@@ -174,10 +174,10 @@ action = "review_required"
 target = 10
 # Stories below this final score are never shortlisted, even when the shortlist is not full.
 min_score = 55
-max_per_category = 3
+max_per_category = 5
 max_per_organisation = 2
 # At most this many stories of the same Stage 3.3 development type (release, funding, policy, ...).
-max_per_development_type = 4
+max_per_development_type = 5
 # At most this many stories on one topic (pairwise similarity >= semantic.topic_similarity).
 max_per_topic = 2
 # Stories at or above this score are kept even when their category or organisation cap is reached.
