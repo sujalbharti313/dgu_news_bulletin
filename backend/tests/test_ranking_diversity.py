@@ -30,7 +30,7 @@ def shortlist(stories, config=CONFIG):
 
 
 def test_same_category_is_capped():
-    research = [story(80 - i, "ai-research", groups=["research"]) for i in range(6)]
+    research = [story(80 - i, "ai-research", groups=["research"]) for i in range(CONFIG.shortlist.max_per_category + 3)]
     tools = [story(60, "ai-tools-development", groups=["tools"])]
     selected, _ = shortlist(research + tools)
     assert (
@@ -39,7 +39,7 @@ def test_same_category_is_capped():
     )
     assert tools[0] in selected
     capped = [s for s in research if s not in selected]
-    assert all("already 3" in s.selection_note for s in capped)
+    assert capped and all(f"already {CONFIG.shortlist.max_per_category}" in s.selection_note for s in capped)
 
 
 def test_same_company_is_capped():
