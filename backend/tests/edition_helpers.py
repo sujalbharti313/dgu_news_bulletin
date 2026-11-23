@@ -61,7 +61,9 @@ def edition_config(**sections) -> EditionConfig:
     return EditionConfig.model_validate(base)
 
 
-def seed_pipeline(session: Session, *, processed_at: datetime | None = None, result: dict | None = None) -> RankingRun:
+def seed_pipeline(
+    session: Session, *, processed_at: datetime | None = None, result: dict | None = None, status: str = "completed"
+) -> RankingRun:
     rows, ranking = pipeline()
     far = datetime(2027, 1, 1, tzinfo=UTC)
     for row in rows:
@@ -72,7 +74,7 @@ def seed_pipeline(session: Session, *, processed_at: datetime | None = None, res
         edition_start=WEEK_START,
         edition_end=WEEK_START + timedelta(days=6),
         timezone="Asia/Kolkata",
-        status="completed",
+        status=status,
         ranking_config_version=data["rankingConfigVersion"],
         verification_config_version=data["verificationConfigVersion"],
         processed_at=processed_at or WEEK_END_UTC + timedelta(hours=1),

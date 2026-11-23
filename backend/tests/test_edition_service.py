@@ -141,6 +141,58 @@ def test_ranking_made_before_the_week_ended_is_not_final(db_session):
     assert db_session.scalar(select(func.count()).select_from(Edition)) == 0
 
 
+def _incomplete_result(pending: int = 2) -> dict:
+    _, ranking = pipeline()
+    return {
+        **ranking,
+        "status": "incomplete",
+        "pending": [
+            {"storyClusterId": str(uuid.uuid4()), "reason": "not_analysed", "detail": "not analysed yet"}
+            for _ in range(pending)
+        ],
+    }
+
+
+def test_incomplete_ranking_waits_during_the_grace_period(db_session):
+    seed_admins(db_session)
+    seed_pipeline(db_session, status="incomplete", result=_incomplete_result())
+    service = make_service(db_session, clock=lambda: WEEK_END_UTC + timedelta(hours=47))
+    assert generate(service).status == "waiting"
+    assert db_session.scalar(select(func.count()).select_from(Edition)) == 0
+
+
+def test_incomplete_ranking_is_used_after_the_grace_period_and_flagged(db_session):
+    seed_admins(db_session)
+    seed_pipeline(db_session, status="incomplete", result=_incomplete_result(3))
+    service = make_service(db_session, clock=lambda: WEEK_END_UTC + timedelta(hours=49))
+    report = generate(service)
+    assert report.status == "generated", report.message
+    detail = service.detail(report.edition_id)
+    assert detail["content"]["composition"]["rankingPending"] == 3
+    assert "incomplete_ranking" in [i["code"] for i in detail["issues"]]
+    assert detail["status"] == "review_required"  # a warning, not a blocker
+
+
+def test_incomplete_ranking_is_never_used_when_disabled(db_session):
+    seed_admins(db_session)
+    seed_pipeline(db_session, status="incomplete", result=_incomplete_result())
+    cfg = edition_config(schedule={"accept_incomplete_ranking_after_hours": 0})
+    service = make_service(db_session, config=cfg, clock=lambda: WEEK_END_UTC + timedelta(days=5))
+    assert generate(service).status == "waiting"
+
+
+def test_incomplete_ranking_made_before_the_week_ended_is_never_used(db_session):
+    seed_admins(db_session)
+    seed_pipeline(
+        db_session,
+        status="incomplete",
+        result=_incomplete_result(),
+        processed_at=WEEK_END_UTC - timedelta(hours=1),
+    )
+    service = make_service(db_session, clock=lambda: WEEK_END_UTC + timedelta(days=3))
+    assert generate(service).status == "waiting"
+
+
 def test_missing_ranking_waits_and_scheduler_failure_is_contained(db_session):
     seed_admins(db_session)
 

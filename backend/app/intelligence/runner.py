@@ -246,10 +246,12 @@ class AnalysisRunner:
             counts[decision] += 1
             if decision in ("new", "changed", "retry", "resume"):
                 todo.append((c, state))
-        # Stories with the most source text go first, so a small run limit is spent where the model can do
-        # real work. Stories too thin to send cost no request and never use up the run limit.
+        # Older stories go first (by the day they were first collected), so a finished week is analysed before
+        # the new week's stories and its ranking and edition can complete. Within a day, stories with the most
+        # source text go first, so the run limit is spent where the model can do real work. Stories too thin
+        # to send cost no request and never use up the run limit.
         words = {c.cluster_id: build_evidence(c).word_count for c, _ in todo}
-        todo.sort(key=lambda t: -words[t[0].cluster_id])  # stable: ties keep the source order
+        todo.sort(key=lambda t: (t[0].first_collected_at.date(), -words[t[0].cluster_id]))  # stable for ties
         rich = [t for t in todo if words[t[0].cluster_id] >= s.ai_min_evidence_words]
         thin = [t for t in todo if words[t[0].cluster_id] < s.ai_min_evidence_words]
         cap = min(limit or s.ai_max_stories_per_run, s.ai_max_stories_per_run)

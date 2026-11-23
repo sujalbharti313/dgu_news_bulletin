@@ -17,6 +17,11 @@ start_week = "2026-11-16"
 # The edition uses the latest COMPLETED Stage 3.4 ranking made after the week ended (a ranking made while the
 # week was still being collected is not final). If there is none, run Stage 3.4 for that week first.
 run_ranking_if_missing = true
+# If the week's ranking is still incomplete this many hours after the week ended (some stories not yet analysed,
+# e.g. the free Gemini quota or the per-run limit ran out), build the edition from the latest incomplete ranking
+# made after the week ended. The edition is flagged so the editor checks it. 0 = always wait. 48 = from Tuesday
+# midnight, so Wednesday's 06:00 run generates it at the latest.
+accept_incomplete_ranking_after_hours = 48
 
 [selection]
 # Up to this many stories, taken in order from Stage 3.4's diversity-aware shortlist (eligible stories only).

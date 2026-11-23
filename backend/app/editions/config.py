@@ -32,6 +32,10 @@ class Schedule(_Strict):
     catch_up_weeks: int = Field(default=1, ge=0, le=4)
     start_week: date | None = None
     run_ranking_if_missing: bool = True
+    # When the week's Stage 3.4 ranking is still incomplete (some stories not yet analysed) this many hours
+    # after the week ended, build the edition from the latest incomplete ranking instead of waiting further.
+    # The edition is flagged so the editor knows. 0 = always wait for a completed ranking.
+    accept_incomplete_ranking_after_hours: int = Field(default=48, ge=0, le=336)
 
     @field_validator("start_week")
     @classmethod
