@@ -1067,7 +1067,11 @@ reaches students until a signed-in editorial admin approves an exact revision an
    UTC instants. The edition for a week becomes due on the following Monday at 06:00 local time.
 2. **Ranking.** The newest *completed* Stage 3.4 run for that week that finished after the week ended. If there is
    none, the scheduler runs Stage 3.4 for the week first (`run_ranking_if_missing`). Mid-week rankings are never
-   used, so late stories are not missed.
+   used, so late stories are not missed. If the week's ranking is still `incomplete`
+   `accept_incomplete_ranking_after_hours` (48) after the week ended, the latest incomplete run made after the
+   week ended is used instead, so a quota or run-limit backlog cannot hold the edition back indefinitely. The
+   editor then sees an "incomplete ranking" warning with the number of stories that were still pending.
+   Stage 3.3 analyses older stories first, so a finished week normally completes before newer stories.
 3. **Selection** (`app/editions/selection.py`). Up to `target_stories` (10) stories in Stage 3.4's shortlist order.
    Only `eligible` stories, with no duplicates, and nothing published in an earlier edition. The edition is never
    padded with weaker stories. Below `min_stories` (3) it is still generated, with a warning for the editor.

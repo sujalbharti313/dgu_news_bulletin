@@ -181,3 +181,17 @@ def test_run_limit_goes_to_stories_with_the_most_text_and_thin_ones_do_not_use_i
     sent = provider.requests[0].messages[1].content
     richest = max(clusters([POLICY, PAPER]), key=lambda c: build_evidence(c).word_count)
     assert richest.title in sent
+
+
+def test_run_limit_goes_to_older_stories_first_so_a_finished_week_completes():
+    from app.intelligence.evidence import build_evidence
+
+    provider = FakeProvider(grounded)
+    pair = clusters([POLICY, PAPER])
+    poorer = min(pair, key=lambda c: build_evidence(c).word_count)
+    older = poorer.model_copy(update={"first_collected_at": poorer.first_collected_at - timedelta(days=3)})
+    newer = [c for c in pair if c.cluster_id != poorer.cluster_id]
+    runner, _ = make_runner([*newer, older], provider, settings=ai_settings(ai_max_stories_per_run=1))
+    report = runner.run()
+    assert len(provider.requests) == 1 and report.counts["deferred_by_run_limit"] == 1
+    assert older.title in provider.requests[0].messages[1].content

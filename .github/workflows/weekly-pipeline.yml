@@ -51,6 +51,9 @@ jobs:
       GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
       GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
       GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+      # Per-run caps sized for ~50 new stories a day within the free Gemini quota (~200 requests/day).
+      AI_MAX_STORIES_PER_RUN: "50"
+      RANKING_MAX_EVALUATIONS_PER_RUN: "50"
       ONLY_EDITION: ${{ github.event.schedule == '30 9 * * 1' || inputs.steps == 'edition' }}
     steps:
       - uses: actions/checkout@v4

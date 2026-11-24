@@ -229,6 +229,7 @@ class EditionService:
         week_start: date | None = None,
         run_id: uuid.UUID | None = None,
         finalized_after: datetime | None = None,
+        statuses: tuple[str, ...] = ("completed",),
     ):
         """A ranking run by id, or the latest COMPLETED run of a week made after `finalized_after` (the end
         of the collection window: a ranking made while the week was still running is not final)."""
@@ -236,7 +237,7 @@ class EditionService:
         if run_id is not None:
             q = q.where(RankingRun.id == run_id)
         else:
-            q = q.where(RankingRun.edition_start == week_start, RankingRun.status == "completed")
+            q = q.where(RankingRun.edition_start == week_start, RankingRun.status.in_(statuses))
             if finalized_after is not None:
                 q = q.where(RankingRun.processed_at >= finalized_after)
         row = s.scalar(q.order_by(RankingRun.processed_at.desc()).limit(1))
@@ -265,6 +266,17 @@ class EditionService:
                     message="Gemini could not compose this edition; the text is Stage 3.3's, unchanged, and the "
                     "introduction was built from the story list. Review it before approving.",
                     path="introduction",
+                )
+            )
+        pending = content.composition.get("rankingPending")
+        if pending:
+            issues.append(
+                Issue(
+                    severity="warning",
+                    code="incomplete_ranking",
+                    message=f"Built from an incomplete ranking: {pending} of this week's stories had not been "
+                    "analysed yet, so a strong story may be missing. Check the candidates before approving.",
+                    path="stories",
                 )
             )
         return issues
@@ -562,6 +574,26 @@ class EditionService:
                 logger.exception("Stage 3.4 run for %s failed", window.label)
             with self.db.write_session() as s:
                 run, ranking = self._ranking(s, week_start=window.start_date, finalized_after=window.end)
+        partial_pending: int | None = None
+        grace = cfg.schedule.accept_incomplete_ranking_after_hours
+        if ranking is None and grace and self.clock() >= window.end + timedelta(hours=grace):
+            with self.db.write_session() as s:
+                run, ranking = self._ranking(
+                    s,
+                    week_start=window.start_date,
+                    finalized_after=window.end,
+                    statuses=("completed", "incomplete"),
+                )
+            if ranking is not None and ranking.shortlist:
+                partial_pending = len(ranking.pending)
+                logger.info(
+                    "using incomplete ranking for %s (%d stories still pending) after %dh grace",
+                    window.label,
+                    partial_pending,
+                    grace,
+                )
+            else:
+                run, ranking = None, None
         if ranking is None:
             with self.db.write_session() as s:
                 self._audit(
@@ -634,6 +666,7 @@ class EditionService:
                 "configVersion": cfg.version,
                 "rankingRunId": str(run.id),
                 "composedAt": self.clock().isoformat(),
+                **({"rankingPending": partial_pending} if partial_pending is not None else {}),
             },
         )
 
