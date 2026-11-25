@@ -79,7 +79,7 @@ class Edition(UUIDPrimaryKey, Timestamps, Base):
     generation: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     last_error: Mapped[str | None] = mapped_column(Text)
     ranking_run_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("ranking_runs.id", ondelete="SET NULL"), index=True
+        UUID(as_uuid=True), ForeignKey("ranking_runs.id", ondelete="RESTRICT"), index=True
     )
     generation_job_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("ingestion_jobs.id", ondelete="SET NULL"), index=True

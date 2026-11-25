@@ -1,6 +1,7 @@
 """Importing this package registers every table on Base.metadata (Alembic relies on it)."""
 
 from app.models.briefing import Briefing
+from app.models.cleanup import CleanupAuditEntry, CleanupJob, CleanupManifestItem
 from app.models.edition import Edition
 from app.models.editorial import EditionAuditEntry, EditionItem, EditionRevision, EditorialAdmin
 from app.models.ingestion import IngestionItem, IngestionJob
@@ -17,6 +18,9 @@ __all__ = [
     "Briefing",
     "CampusItem",
     "CareerSignal",
+    "CleanupAuditEntry",
+    "CleanupJob",
+    "CleanupManifestItem",
     "Edition",
     "EditionAuditEntry",
     "EditionItem",

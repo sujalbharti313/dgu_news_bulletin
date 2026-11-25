@@ -159,6 +159,9 @@ class Settings(BaseSettings):
     # --- Stage 3.5 weekly editions, admin review and publishing. Server-side only. ---
     # Schedule, selection, generation and text limits (validated TOML, relative to backend/).
     edition_config_file: str = "config/edition.toml"
+    # --- Stage 3.6 cleanup and data retention. Server-side only. ---
+    # Retention periods, safety delays and batch limits (validated TOML, relative to backend/).
+    retention_config_file: str = "config/retention.toml"
     # Supabase Auth, used only to verify an editorial admin's sign-in token (GET /auth/v1/user). The project
     # URL and its publishable (anon) key are public values; no service-role key is ever used or needed.
     # Unset = the admin editions API does not exist (404).

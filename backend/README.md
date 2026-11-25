@@ -1254,6 +1254,113 @@ quota"), 1 when a generation failed and 2 for a configuration error.
 - Admin-triggered generation runs inside the request. A very slow Gemini answer can hit the host's time limit,
   and the edition then stays retryable.
 
+## Cleanup, data retention and published-edition preservation (Phase 3.6)
+
+The pipeline keeps working data for every story it collects: the Stage 3.3 analysis, the Stage 3.4 verification and
+embedding, and a ranking run per day. Stage 3.6 removes that data for stories that were **not** selected, but only
+after the week's edition is confirmed published and the safety delays have passed. Published editions never depend
+on it: publishing copies everything a reader sees into the edition revision (the exact snapshot) and into the public
+`stories` and `sources` rows.
+
+### What is deleted, what is kept
+
+| Data | Kept for | Deleted when |
+| --- | --- | --- |
+| Published editions, every edition revision, public `stories`, `sources`, links, `edition_items` | Permanent | Never (database triggers and foreign keys refuse it) |
+| Analysis + embedding of any story in any edition revision | Permanent | Never (trigger on `story_analyses`, `edition_items` ON DELETE RESTRICT) |
+| Drafts, review, approved, rejected and archived editions, and their candidates | Permanent | Never in this stage |
+| The ranking run an edition was built from, and each week's latest completed run | Permanent | Never (`editions.ranking_run_id` is ON DELETE RESTRICT) |
+| `edition_audit_log`, `cleanup_audit_log`, cleanup jobs and manifests | Permanent | Never (append-only / no-delete triggers) |
+| Unselected story analysis, verification and embedding of a published week | Until the later of published + 72 h and week end + 35 days, then a 24 h manifest hold | By that week's cleanup job |
+| Superseded ranking runs of a published week | Same as above | By that week's cleanup job |
+| Expired leftovers: never-ranked analyses whose source items are gone, weeks before the first edition week, verification rows without an analysis, records a week job had to skip | 35 days and `expires_at` passed | Weekly orphans sweep |
+| Staged source items (`ingestion_items`) | 14 days (`INGESTION_ITEM_RETENTION_DAYS`, Stage 3.1, unchanged) | Every ingestion run, as before |
+| Job records (`ingestion_jobs`) | 90 days (`INGESTION_JOB_RETENTION_DAYS`, Stage 3.1, unchanged) | Every ingestion run, as before |
+
+The 35-day minimum is longer than Stage 3.4's semantic lookback (28 days): new stories are compared with the
+embeddings of earlier weeks to spot repeats, so those embeddings must still exist. The configuration loader refuses a
+shorter value. The old rolled-back `story_intelligence` table is not touched.
+
+All periods are in `config/retention.toml` (validated; `python -m scripts.cleanup check`). Its `version` hash is
+stored on every job and audit entry.
+
+### How a week is cleaned
+
+1. **Plan.** Each daily scheduler run creates one job per published edition that has none (`week:2026-11-16`). The
+   job key is unique and there is a one-job-per-edition index, so repeated or parallel runs never duplicate it.
+2. **Confirm publication** (on creation, before staging and again before every deletion pass): the edition exists,
+   is a real Stage 3.5 edition, its week and slug are consistent, the week has ended, status is `published` with a
+   past `published_at`, the published revision equals the approved one, a `published` audit entry exists with no
+   later publish failure, the snapshot's hash matches its approval, every snapshot story exists as a published public
+   story in order with its source link and source, the selection matches, and the edition and all its stories are
+   returned by the public API's own filters. Any failure → the job is `blocked` with reason codes and nothing is
+   deleted. It is re-checked every run.
+3. **Stage the manifest** once `not_before` has passed: every candidate (clusters ranked for the week or listed by
+   any of its ranking runs, and the week's ranking runs) is saved in `cleanup_manifest_items` as `pending`,
+   `protected` (permanent reason) or `skipped` (temporary reason). Then the job waits `manifest_hold_hours`.
+4. **Delete in bounded batches** (`batch_size` per transaction, `max_batches_per_run` per run). Each batch locks its
+   rows with `FOR UPDATE SKIP LOCKED`, checks every protection again, deletes the verification, embedding and analysis
+   together, checks the rows are gone, and updates the manifest and counts, all in one transaction. Rows another
+   process holds are retried later. If the database itself refuses (a foreign key or trigger), the batch is split
+   and the refused record is kept as `database_protected`; nothing is ever forced. While a pipeline stage
+   (3.2 to 3.5) is running, deletion waits for the next run.
+5. **Complete** only when nothing is pending and a final check finds none of the deleted records still present.
+   Failures are retried with exponential backoff (`retry_backoff_minutes * 2^(n-1)`, up to `max_retries`), then wait
+   for an admin. A run that crashes leaves the job `running`; the next run resumes it from the manifest.
+
+Protection reasons: `in_edition_selection`, `in_edition_revision`, `active_edition_candidate` (candidate of the ranking
+of any edition that is not published), `ranked_in_other_week`, `referenced_by_edition`, `latest_completed_run`,
+`database_protected` (permanent); `still_in_pipeline` (staged source items still exist), `recently_active` (touched in
+the last 72 h), `locked`, `outside_scope` (temporary, picked up by a later orphans sweep).
+
+Embeddings are one per story (`story_embeddings.cluster_id` is unique) and are deleted explicitly together with their
+story, so none is ever orphaned or shared. The cleanup never calls Gemini or any other API, and no AI output decides
+anything: eligibility is SQL over database records.
+
+### Admin page and API
+
+`/admin/cleanup` (link "Data cleanup" on the editions page) lists jobs with their status, counts, deadlines, blocked
+reasons and errors; a job opens to show the manifest summary (what was deleted, protected or skipped, and why) and its
+audit trail. Admins can retry a failed job, cancel a job that has not run, reopen a cancelled one (with a fresh
+hold) and "Run due cleanup now" (limited to `manual_runs_per_hour`). None of these can delete a chosen record, a table
+or a published edition, or skip a delay. The API (`/api/v1/admin/cleanup/...`) uses the same Supabase Auth editorial
+admin check as the editions API and does not exist when admin sign-in is not configured.
+
+### Commands
+
+```powershell
+python -m scripts.cleanup check          # configuration and schema
+python -m scripts.cleanup dry-run        # what would happen now; writes nothing, safe on the live database
+python -m scripts.cleanup status         # recent jobs
+python -m scripts.cleanup show JOB-ID    # one job: manifest summary and audit trail
+python -m scripts.cleanup scheduled      # one pass, as the scheduler runs it
+python -m scripts.cleanup plan 2026-w47  # plan one published edition now (same delays apply)
+python -m scripts.cleanup cancel|reopen|retry JOB-ID
+```
+
+### Scheduler
+
+The existing GitHub Actions workflow runs `python -m scripts.cleanup scheduled` as its last step every day (also
+"Run workflow" with steps = `cleanup`). Every deadline is a stored timestamp, so a late or missed run simply catches
+up the next day. If migration 0008 is not applied yet, the step only warns. Cost: ₹0 (no AI, no new service).
+
+### Data (migration 0008)
+
+New tables `cleanup_jobs`, `cleanup_manifest_items`, `cleanup_audit_log` (RLS on, no Data API access, no DELETE or
+TRUNCATE; the audit log is append-only). Triggers refuse deleting a published Stage 3.5 edition, its stories or its
+selection, and any analysis that appears in an edition revision. `editions.ranking_run_id` becomes ON DELETE
+RESTRICT. `ingestion_jobs.job_type` accepts `cleanup` (the run lock).
+
+### Limitations
+
+- The first real deletion can happen no earlier than 27 Dec 2026 18:30 UTC (week of 16–22 Nov + 35 days, then the
+  hold), so there is time to check `dry-run` and the admin page first.
+- Draft, rejected and archived editions keep their candidates' data indefinitely in this stage.
+- Staged source items keep Stage 3.1's 14-day purge, which does not wait for publication. They are not needed by
+  editions (the snapshot and analyses hold the source links).
+- The manual "run now" in a serverless API host is bounded by the host's request time; the scheduler finishes any
+  remaining batches.
+
 ## Connecting the frontend
 
 1. Run the API (`uvicorn app.main:app --port 8000`) with `CORS_ORIGINS` including the frontend origin.
@@ -1307,5 +1414,7 @@ and the diversity-aware weekly shortlist (Phase 3.4).
 Weekly edition generation from the Stage 3.4 ranking, Gemini composition with strict validation, revisions, audit
 log, Supabase Auth editorial admins, review/approve/reject/publish workflow, GitHub Actions scheduler and the
 `/admin` pages (Phase 3.5).
-Not implemented (Phase 3.6+): unpublishing, semantic or conversational search for readers, audio generation,
+Publication-gated cleanup and data retention with manifests, database-level protection of published editions,
+audit log and the `/admin/cleanup` page (Phase 3.6).
+Not implemented: unpublishing, semantic or conversational search for readers, audio generation,
 image generation.

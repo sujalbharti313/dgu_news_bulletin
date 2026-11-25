@@ -1,9 +1,20 @@
-/** Client for the Stage 3.5 admin API. Every call carries the admin's Supabase access token. */
+/** Client for the Stage 3.5 editions and Stage 3.6 cleanup admin APIs. Every call carries the admin's Supabase
+ * access token. */
 import { API_BASE_URL } from "@/lib/api/config";
 import type { AdminSession } from "./auth";
 import { needsRefresh, refreshSession } from "./auth";
 import { AdminApiError, errorFromResponse, FRIENDLY } from "./errors";
-import type { Candidate, EditionDetail, EditionSummary, GenerationReport, Issue } from "./types";
+import type {
+  Candidate,
+  CleanupJob,
+  CleanupJobDetail,
+  CleanupPolicy,
+  CleanupRunReport,
+  EditionDetail,
+  EditionSummary,
+  GenerationReport,
+  Issue,
+} from "./types";
 
 export { AdminApiError } from "./errors";
 
@@ -13,7 +24,17 @@ export interface SessionHandle {
   set(session: AdminSession | null): void;
 }
 
-async function call<T>(handle: SessionHandle, method: "GET" | "POST" | "PUT", path: string, body?: unknown, retried = false): Promise<T> {
+const EDITIONS = "/api/v1/admin/editions";
+const CLEANUP = "/api/v1/admin/cleanup";
+
+async function call<T>(
+  handle: SessionHandle,
+  method: "GET" | "POST" | "PUT",
+  path: string,
+  body?: unknown,
+  retried = false,
+  base: string = EDITIONS,
+): Promise<T> {
   if (!API_BASE_URL) throw new AdminApiError(0, "not_configured", "NEXT_PUBLIC_API_BASE_URL is not set for this site.");
   let session = handle.get();
   if (!session) throw new AdminApiError(401, "signed_out", FRIENDLY[401]);
@@ -24,7 +45,7 @@ async function call<T>(handle: SessionHandle, method: "GET" | "POST" | "PUT", pa
   }
   let res: Response;
   try {
-    res = await fetch(`${API_BASE_URL}/api/v1/admin/editions${path}`, {
+    res = await fetch(`${API_BASE_URL}${base}${path}`, {
       method,
       headers: {
         Accept: "application/json",
@@ -41,7 +62,7 @@ async function call<T>(handle: SessionHandle, method: "GET" | "POST" | "PUT", pa
   if (res.status === 401 && !retried) {
     const fresh = await refreshSession(session).catch(() => null);
     handle.set(fresh);
-    if (fresh) return call<T>(handle, method, path, body, true);
+    if (fresh) return call<T>(handle, method, path, body, true, base);
   }
   const data = await res.json().catch(() => null);
   if (!res.ok) {
@@ -89,6 +110,25 @@ export function adminApi(handle: SessionHandle) {
       call<GenerationReport>(handle, "POST", `/${encodeURIComponent(id)}/regenerate`, { expectedRevision }),
     archive: (id: string, expectedRevision: number) =>
       call<StatusResult>(handle, "POST", `/${encodeURIComponent(id)}/archive`, { expectedRevision }),
+    cleanup: {
+      policy: () => call<CleanupPolicy>(handle, "GET", "/policy", undefined, false, CLEANUP),
+      jobs: () => call<{ items: CleanupJob[] }>(handle, "GET", "/jobs?limit=100", undefined, false, CLEANUP),
+      job: (id: string, state?: string) =>
+        call<CleanupJobDetail>(
+          handle,
+          "GET",
+          `/jobs/${encodeURIComponent(id)}${state ? `?state=${encodeURIComponent(state)}` : ""}`,
+          undefined,
+          false,
+          CLEANUP,
+        ),
+      retry: (id: string) => call<CleanupJob>(handle, "POST", `/jobs/${encodeURIComponent(id)}/retry`, undefined, false, CLEANUP),
+      cancel: (id: string) => call<CleanupJob>(handle, "POST", `/jobs/${encodeURIComponent(id)}/cancel`, undefined, false, CLEANUP),
+      reopen: (id: string) => call<CleanupJob>(handle, "POST", `/jobs/${encodeURIComponent(id)}/reopen`, undefined, false, CLEANUP),
+      plan: (editionId: string) =>
+        call<CleanupJob>(handle, "POST", `/editions/${encodeURIComponent(editionId)}/plan`, undefined, false, CLEANUP),
+      run: () => call<CleanupRunReport>(handle, "POST", "/run", undefined, false, CLEANUP),
+    },
   };
 }
 

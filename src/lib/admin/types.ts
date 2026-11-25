@@ -157,3 +157,76 @@ export interface GenerationReport {
   editionStatus: string | null;
   revision: number | null;
 }
+
+/* ---------------------------------------------------------------------------------------------------------------
+ * Stage 3.6 cleanup admin API (backend/app/api/v1/endpoints/admin_cleanup.py). Ids, counts and reason codes only.
+ * ------------------------------------------------------------------------------------------------------------- */
+
+export type CleanupJobStatus = "scheduled" | "blocked" | "staged" | "running" | "completed" | "failed" | "cancelled";
+
+export interface CleanupJob {
+  id: string;
+  jobKey: string;
+  kind: "published_week" | "expired_orphans";
+  editionId: string | null;
+  editionSlug?: string | null;
+  windowStart: string | null;
+  windowEnd: string | null;
+  timezone: string;
+  status: CleanupJobStatus;
+  trigger: string;
+  policyVersion: string;
+  notBefore: string | null;
+  stagedAt: string | null;
+  executeAfter: string | null;
+  startedAt: string | null;
+  lastRunAt: string | null;
+  completedAt: string | null;
+  nextRetryAt: string | null;
+  eligible: number;
+  protected: number;
+  deleted: number;
+  skipped: number;
+  failures: number;
+  retries: number;
+  blockedReasons: string[];
+  protectionSummary: Record<string, number>;
+  lastError: string | null;
+  createdAt: string | null;
+}
+
+export interface CleanupManifestRow {
+  target: string;
+  state: string;
+  reason: string | null;
+  count: number;
+}
+
+export interface CleanupJobDetail extends CleanupJob {
+  details: Record<string, unknown>;
+  manifest: CleanupManifestRow[];
+  items: { target: string; recordId: string; state: string; reason: string | null; attempts: number; processedAt: string | null }[];
+  audit: { action: string; actorKind: string; actorId: string | null; policyVersion: string | null; details: Record<string, unknown>; occurredAt: string }[];
+}
+
+export interface CleanupPolicy {
+  version: string;
+  enabled: boolean;
+  publishedWeek: { safety_delay_hours: number; min_story_age_days: number; manifest_hold_hours: number; delete_superseded_ranking_runs: boolean };
+  orphans: { enabled: boolean; min_age_days: number; manifest_hold_hours: number };
+  execution: Record<string, number>;
+  activeWindowHours: number;
+  firstEditionWeek: string | null;
+  existingStage31: { stagedItemRetentionDays: number; jobRecordRetentionDays: number };
+  permanent: string[];
+}
+
+export interface CleanupRunReport {
+  status: string;
+  message: string;
+  planned: number;
+  staged: number;
+  deleted: number;
+  deferred: string | null;
+  failures: string[];
+}
