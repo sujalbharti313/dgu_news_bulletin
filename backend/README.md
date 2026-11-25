@@ -1138,8 +1138,13 @@ in one transaction.
 
 `.github/workflows/weekly-pipeline.yml` runs every day at 06:00 IST:
 
-- ingest, process, analyse, rank the current week;
-- then `python -m scripts.edition scheduled`.
+- first `python -m scripts.edition scheduled`, while the day's free Gemini quota is unused (composing an
+  edition needs only a few requests; the analysis and ranking below can use up the rest);
+- then ingest, process, analyse, rank the current week. A failed edition does not stop these steps; the run is
+  marked failed at the end instead.
+
+If the quota ran out anyway, start the workflow by hand after the reset (midnight Pacific, 13:30 IST) with
+**Run workflow → steps: edition**.
 
 A second run on Monday at 15:00 IST retries only the edition step. The scheduler is idempotent: a week that
 already has an edition is skipped, and failed weeks are retried after the backoff. Up to `catch_up_weeks`
