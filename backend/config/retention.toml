@@ -1,0 +1,48 @@
+# Stage 3.6 data retention and cleanup. Server-side configuration (read by the backend and the scheduler only).
+# Every retention period lives here; change it with a pull request. `python -m scripts.cleanup check` validates it,
+# and the scheduler refuses to delete anything while it is invalid.
+#
+# What is NEVER deleted by cleanup, whatever this file says: published editions, every edition revision (the
+# exact publication snapshot), the public stories and their sources and links, edition items, the analysis and
+# embedding of any story that appears in any edition revision, drafts and editions under review, the ranking run an
+# edition was built from, and the audit logs (edition_audit_log, cleanup_audit_log) and cleanup job history.
+# The database enforces most of this itself (foreign keys, triggers), independently of this file.
+
+# false = the scheduler plans nothing and deletes nothing (status and dry runs still work).
+enabled = true
+
+[published_week]
+# Unselected working data (Stage 3.3 analysis, Stage 3.4 verification and embedding) of a week becomes eligible
+# only after BOTH:
+#   - the week's edition was confirmed published at least `safety_delay_hours` ago, and
+#   - the week ended at least `min_story_age_days` ago. This must be longer than Stage 3.4's semantic lookback
+#     (config/ranking.toml [semantic] lookback_days = 28), because new stories are compared with the embeddings of
+#     the previous weeks to find repeats; the check below refuses a shorter value.
+safety_delay_hours = 72
+min_story_age_days = 35
+# After the manifest (the exact list of records to delete) is saved, wait this long before deleting. Every record
+# is checked again at deletion time; anything that became protected in between is skipped.
+manifest_hold_hours = 24
+# Superseded Stage 3.4 ranking runs of a published week (daily incremental runs). The run the edition was built
+# from and the week's latest completed run are always kept.
+delete_superseded_ranking_runs = true
+
+[orphans]
+# Expired working data no stage can use any more: analyses of stories that were never ranked and whose staged
+# source items are gone, analyses ranked only for a week before the first edition week (config/edition.toml
+# start_week), and verification rows whose analysis no longer exists. Needs expires_at passed AND this age.
+enabled = true
+min_age_days = 35
+manifest_hold_hours = 24
+
+[execution]
+# Records deleted per transaction, and transactions per scheduler run (the rest continues on the next run).
+batch_size = 100
+max_batches_per_run = 20
+# A failed job is retried automatically up to this many times, waiting retry_backoff_minutes * 2^(n-1).
+max_retries = 5
+retry_backoff_minutes = 60
+# A job still "running" after this long is treated as interrupted and resumed safely on the next run.
+stale_running_minutes = 60
+# Manual "run cleanup now" requests per admin per hour (scheduled runs are not limited).
+manual_runs_per_hour = 6

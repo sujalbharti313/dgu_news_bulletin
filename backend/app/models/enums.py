@@ -89,7 +89,8 @@ class CampusItemKind(StrEnum):
 class IngestionJobType(StrEnum):
     """SOURCE_FETCH (RSS/Atom) and NEWSLETTER_IMPORT (Gmail) are used by Phase 3.1, STORY_PROCESSING by
     Phase 3.2, SUMMARISATION by Phase 3.3 (one AI analysis run), VERIFICATION by Stage 3.4 (one verification
-    and ranking run), EDITION_GENERATION by Stage 3.5 (one weekly edition generation attempt)."""
+    and ranking run), EDITION_GENERATION by Stage 3.5 (one weekly edition generation attempt),
+    CLEANUP by Stage 3.6 (one data-retention pass)."""
 
     SOURCE_FETCH = "source_fetch"
     NEWSLETTER_IMPORT = "newsletter_import"
@@ -99,6 +100,8 @@ class IngestionJobType(StrEnum):
     VERIFICATION = "verification"
     # Stage 3.5: one scheduled (or admin-triggered) weekly edition generation attempt.
     EDITION_GENERATION = "edition_generation"
+    # Stage 3.6: one cleanup pass (the run lock of the retention engine; no news content).
+    CLEANUP = "cleanup"
 
 
 class IngestionJobStatus(StrEnum):
@@ -237,3 +240,66 @@ class EditionAuditAction(StrEnum):
     REGENERATED = "regenerated"
     RETRY_TRIGGERED = "retry_triggered"
     ARCHIVED = "archived"
+
+
+class CleanupJobKind(StrEnum):
+    """What a Stage 3.6 cleanup job covers."""
+
+    # Unselected working data of one week whose edition is confirmed published.
+    PUBLISHED_WEEK = "published_week"
+    # Expired working data that no week, edition or pipeline stage can use any more (never ranked, or ranked for a
+    # week before the first edition week).
+    EXPIRED_ORPHANS = "expired_orphans"
+
+
+class CleanupJobStatus(StrEnum):
+    """Lifecycle of a Stage 3.6 cleanup job (app.cleanup.service).
+
+    scheduled → staged → running → completed
+    scheduled/staged/running → blocked (publication no longer verifiable; re-checked every run)
+    running → failed (retryable, with backoff) → staged
+    scheduled/staged/blocked/failed → cancelled (admin; can be reopened by an admin)"""
+
+    SCHEDULED = "scheduled"
+    BLOCKED = "blocked"
+    STAGED = "staged"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class CleanupTarget(StrEnum):
+    # A Stage 3.2 story cluster's working data: its Stage 3.4 verification, its embedding and its Stage 3.3
+    # analysis, deleted together.
+    STORY_CLUSTER = "story_cluster"
+    # A superseded Stage 3.4 ranking run of a published week.
+    RANKING_RUN = "ranking_run"
+    # A Stage 3.4 verification row whose Stage 3.3 analysis no longer exists.
+    ORPHAN_VERIFICATION = "orphan_verification"
+
+
+class ManifestState(StrEnum):
+    PENDING = "pending"
+    DELETED = "deleted"
+    PROTECTED = "protected"
+    SKIPPED = "skipped"
+    FAILED = "failed"
+
+
+class CleanupAuditAction(StrEnum):
+    JOB_CREATED = "job_created"
+    PUBLICATION_VERIFIED = "publication_verified"
+    PUBLICATION_CHECK_FAILED = "publication_check_failed"
+    MANIFEST_STAGED = "manifest_staged"
+    DEFERRED = "deferred"
+    DELETION_STARTED = "deletion_started"
+    BATCH_DELETED = "batch_deleted"
+    RECORDS_SKIPPED = "records_skipped"
+    DELETION_COMPLETED = "deletion_completed"
+    DELETION_FAILED = "deletion_failed"
+    RETRY_SCHEDULED = "retry_scheduled"
+    RETRY_REQUESTED = "retry_requested"
+    JOB_CANCELLED = "job_cancelled"
+    JOB_REOPENED = "job_reopened"
+    MANUAL_TRIGGER = "manual_trigger"

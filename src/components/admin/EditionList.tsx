@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Loader2, RefreshCw, Sparkles } from "lucide-react";
+import { ArrowRight, Loader2, RefreshCw, Sparkles, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { weekLabel } from "@/lib/admin/editor";
@@ -56,6 +56,9 @@ export function EditionList() {
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
+          <Link href="/admin/cleanup" className="btn-secondary">
+            <Trash2 className="size-4" aria-hidden /> Data cleanup
+          </Link>
           <button type="button" className="btn-secondary" onClick={() => void load()}>
             <RefreshCw className="size-4" aria-hidden /> Refresh
           </button>
