@@ -1,7 +1,8 @@
 # AI//CAMPUS server-side scheduler (free): GitHub Actions on this public repository.
 #
-# Daily at 06:00 Asia/Kolkata it collects news (Stage 3.1), processes it (3.2), analyses new stories (3.3), ranks
-# the running week incrementally (3.4) and then runs the Stage 3.5 edition scheduler. The edition scheduler is
+# Daily at 06:00 Asia/Kolkata it first runs the Stage 3.5 edition scheduler (while the free Gemini quota is unused),
+# then collects news (Stage 3.1), processes it (3.2), analyses new stories (3.3) and ranks the running week
+# incrementally (3.4). The edition scheduler is
 # idempotent: it only generates the edition of a week that has ended and has none yet (Monday after the week;
 # missed or failed runs are retried on the next run), so running daily is safe. A second Monday run at 15:00 IST
 # retries only the edition step. Nothing here approves or publishes: an admin does that in the admin pages.
@@ -75,6 +76,16 @@ jobs:
           fi
           python -m scripts.edition check
 
+      # The edition runs first, while the day's free Gemini quota is untouched: composing it needs only a few
+      # requests, but the daily analysis and ranking below can use up the rest of the quota.
+      - name: "Stage 3.5: weekly edition"
+        if: steps.config.outputs.skip != 'true'
+        run: |
+          # A failed edition must not stop the daily news pipeline below; the Report step fails the run instead.
+          set +e; python -m scripts.edition scheduled; code=$?; set -e
+          if [ "$code" -ne 0 ]; then echo "::error::Weekly edition generation failed (exit $code)."; fi
+          echo "edition_code=$code" >> "$GITHUB_ENV"
+
       - name: "Stage 3.1-3.4: collect, process, analyse, rank this week"
         if: steps.config.outputs.skip != 'true' && env.ONLY_EDITION != 'true'
         run: |
@@ -91,12 +102,10 @@ jobs:
           step "Ranking (current week)" python -m scripts.rank run --week current
           echo "problems=$problems" >> "$GITHUB_ENV"
 
-      - name: "Stage 3.5: weekly edition"
-        if: steps.config.outputs.skip != 'true'
-        run: python -m scripts.edition scheduled
-
       - name: Report
         if: always() && steps.config.outputs.skip != 'true'
         run: |
           python -m scripts.edition status --limit 5 || true
-          if [ "${problems:-0}" != "0" ]; then echo "::error::A pipeline stage failed (see above)."; exit 1; fi
+          if [ "${problems:-0}" != "0" ] || [ "${edition_code:-0}" != "0" ]; then
+            echo "::error::A pipeline stage failed (see above)."; exit 1
+          fi
