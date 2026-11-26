@@ -135,6 +135,7 @@ def test_full_run_against_postgres_never_touches_stories(store, db_session):
         store,
         sources=[source],
         http_factory=lambda: make_http(lambda r: httpx.Response(200, content=fixture("rss2.xml"))),
+        clock=lambda: datetime(2026, 11, 4, 6, 0, tzinfo=UTC),  # rss2.xml is dated 2-3 Nov 2026
     )
     first = runner.run()
     second = runner.run()

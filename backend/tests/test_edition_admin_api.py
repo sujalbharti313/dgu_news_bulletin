@@ -208,9 +208,11 @@ def test_write_rate_limit(api):
     assert codes[-1] == 429
 
 
-def test_cors_allows_only_the_frontend_origin_with_authorization(api):
+@pytest.mark.parametrize("path", ["/api/v1/admin/editions", "/api/v1/admin/cleanup/jobs/x/retry"])
+def test_cors_allows_only_the_frontend_origin_with_authorization(api, path):
+    # The /admin/editions and /admin/cleanup pages both call the API cross-origin with a bearer token.
     ok = api.options(
-        "/api/v1/admin/editions",
+        path,
         headers={
             "Origin": "https://bulletin.example.edu",
             "Access-Control-Request-Method": "POST",
@@ -224,6 +226,19 @@ def test_cors_allows_only_the_frontend_origin_with_authorization(api):
         headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "POST"},
     )
     assert "access-control-allow-origin" not in bad.headers
+
+
+@pytest.mark.parametrize("path", ["/api/v1/admin/ingestion/runs", "/api/v1/admin/editionsx", "/api/v1/stories"])
+def test_cors_gives_other_paths_no_authorization_header(api, path):
+    response = api.options(
+        path,
+        headers={
+            "Origin": "https://bulletin.example.edu",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization",
+        },
+    )
+    assert response.status_code == 400
 
 
 def test_public_api_hides_every_unpublished_state(api):

@@ -1,5 +1,7 @@
 """Admin ingestion endpoints: off by default, bearer-token protected, bounded inputs. No database needed."""
 
+from datetime import UTC, datetime
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -12,6 +14,8 @@ from tests.conftest import make_settings
 from tests.ingestion_helpers import fixture, make_http
 
 TOKEN = "t" * 40
+# The rss2.xml fixture is dated 2-3 Nov 2026: pin the clock so the first-run lookback window always covers it.
+NOW = datetime(2026, 11, 4, 6, 0, tzinfo=UTC)
 SOURCES = [RssSourceConfig(key="good", type="rss", name="Good", category="news", url="https://good.example.com/rss")]
 
 
@@ -26,6 +30,7 @@ def make(token: str | None = TOKEN, store=None):
             store,
             sources=SOURCES,
             http_factory=lambda: make_http(lambda r: httpx.Response(200, content=fixture("rss2.xml"))),
+            clock=lambda: NOW,
         )
 
     app.state.ingestion_runner_factory = factory
