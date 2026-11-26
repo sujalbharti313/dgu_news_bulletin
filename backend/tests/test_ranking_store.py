@@ -150,7 +150,8 @@ def test_similarity_function_is_not_executable_by_public_roles(engine):
             "SELECT proacl::text FROM pg_proc WHERE proname = 'match_story_embeddings'"
         ))  # fmt: skip
         definer = conn.scalar(text("SELECT prosecdef FROM pg_proc WHERE proname = 'match_story_embeddings'"))
-    assert acl is not None and "=X/" not in acl.replace("tester=X/", "")  # no PUBLIC execute grant
+    entries = acl.strip("{}").split(",") if acl is not None else []
+    assert entries and not any(e.startswith("=") for e in entries)  # no PUBLIC execute grant (an entry with no role)
     assert "anon" not in acl and "authenticated" not in acl
     assert definer is False  # SECURITY INVOKER: callers keep their own (RLS-restricted) rights
 

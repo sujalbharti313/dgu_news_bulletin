@@ -1361,6 +1361,17 @@ RESTRICT. `ingestion_jobs.job_type` accepts `cleanup` (the run lock).
 - The manual "run now" in a serverless API host is bounded by the host's request time; the scheduler finishes any
   remaining batches.
 
+## Phase 4.1 audit: database privileges (migration 0009)
+
+Migration 0009 changes privileges only (no table, column or row). Supabase gives its Data API roles (`anon`,
+`authenticated`) default rights on every new table in `public`; 0007 and 0008 already removed them on their own
+tables, and 0009 removes them on the older tables (stories, sources, ingestion, analyses, embeddings, ranking runs,
+usage ledger, ...) and for tables created later. Row-level security already blocked every row, so this is defence in
+depth: a policy added by mistake, or RLS switched off in the dashboard, can no longer open these tables to anyone
+holding the public publishable key. The backend (database owner) and Supabase Auth are unaffected.
+
+Apply it from your computer like the earlier ones: `alembic upgrade head` (expect `0008 -> 0009`).
+
 ## Connecting the frontend
 
 1. Run the API (`uvicorn app.main:app --port 8000`) with `CORS_ORIGINS` including the frontend origin.

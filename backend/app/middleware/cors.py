@@ -1,11 +1,13 @@
-"""CORS by path: the public API stays GET-only cross-origin; only the Stage 3.5 editorial admin API (which needs a
-Supabase admin token in the Authorization header) also accepts POST/PUT and the Authorization header from the
-configured frontend origins. No credentials (cookies) are ever allowed cross-origin."""
+"""CORS by path: the public API stays GET-only cross-origin; only the editorial admin APIs that the /admin pages call
+with a Supabase admin token in the Authorization header (Stage 3.5 editions and Stage 3.6 cleanup) also accept
+POST/PUT and the Authorization header from the configured frontend origins. No credentials (cookies) are ever
+allowed cross-origin. The other admin endpoints (ingestion, processing, analysis, ranking) are server-to-server
+only and get no cross-origin Authorization header."""
 
 from starlette.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-EDITORIAL_ADMIN_PREFIX = "/api/v1/admin/editions"
+EDITORIAL_ADMIN_PREFIXES = ("/api/v1/admin/editions", "/api/v1/admin/cleanup")
 
 
 class PathAwareCORS:
@@ -27,7 +29,11 @@ class PathAwareCORS:
         )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and scope["path"].startswith(EDITORIAL_ADMIN_PREFIX):
+        if scope["type"] == "http" and _is_editorial_admin(scope["path"]):
             await self.admin(scope, receive, send)
         else:
             await self.public(scope, receive, send)
+
+
+def _is_editorial_admin(path: str) -> bool:
+    return any(path == p or path.startswith(p + "/") for p in EDITORIAL_ADMIN_PREFIXES)

@@ -41,7 +41,7 @@ def test_upgrade_downgrade_upgrade_and_no_drift(scratch_url):
     with eng.connect() as conn:
         diff = compare_metadata(MigrationContext.configure(conn, opts={"compare_type": True}), Base.metadata)
         assert diff == [], diff
-        assert conn.scalar(text("SELECT version_num FROM alembic_version")) == "0008"
+        assert conn.scalar(text("SELECT version_num FROM alembic_version")) == "0009"
     eng.dispose()
 
 
@@ -58,7 +58,7 @@ def test_upgrade_works_from_the_rolled_back_phase_3_3_state(scratch_url):
         conn.execute(text("UPDATE alembic_version SET version_num = '0004'"))
     command.upgrade(cfg, "head")
     with eng.connect() as conn:
-        assert conn.scalar(text("SELECT version_num FROM alembic_version")) == "0008"
+        assert conn.scalar(text("SELECT version_num FROM alembic_version")) == "0009"
         assert conn.scalar(text("SELECT count(*) FROM story_intelligence")) == 1  # untouched
         assert conn.scalar(text("SELECT to_regclass('story_analyses') IS NOT NULL"))
     rollback = os.path.join(BACKEND_DIR, "migrations", "rollback", "0004_drop_story_intelligence.sql")
@@ -66,7 +66,44 @@ def test_upgrade_works_from_the_rolled_back_phase_3_3_state(scratch_url):
         conn.connection.driver_connection.execute(fh.read())
         conn.commit()
     with eng.connect() as conn:
-        assert conn.scalar(text("SELECT version_num FROM alembic_version")) == "0008"
+        assert conn.scalar(text("SELECT version_num FROM alembic_version")) == "0009"
         assert not conn.scalar(text("SELECT to_regclass('story_intelligence') IS NOT NULL"))
         assert conn.scalar(text("SELECT to_regclass('story_analyses') IS NOT NULL"))
+    eng.dispose()
+
+
+def test_data_api_roles_have_no_privileges_on_any_table(scratch_url):
+    """Supabase's anon/authenticated roles (simulated here) end with no table, sequence or function rights in
+    public, including on the 0001-0006 tables that were created before the per-table revokes."""
+    eng = create_engine(scratch_url, isolation_level="AUTOCOMMIT")
+    with eng.connect() as conn:
+        for role in ("anon", "authenticated"):
+            if not conn.scalar(text("SELECT 1 FROM pg_roles WHERE rolname = :r"), {"r": role}):
+                conn.execute(text(f"CREATE ROLE {role} NOLOGIN"))
+    cfg = Config(os.path.join(BACKEND_DIR, "alembic.ini"))
+    cfg.attributes["settings"] = make_settings(database_url=scratch_url.render_as_string(hide_password=False))
+    command.upgrade(cfg, "0008")
+    with eng.connect() as conn:  # what Supabase's default privileges do for tables made by 0001-0006
+        conn.execute(text("GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated"))
+        conn.execute(text("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated"))
+    command.upgrade(cfg, "head")
+    with eng.connect() as conn:
+        tables = conn.scalars(
+            text("SELECT c.oid::regclass::text FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace "
+                 "AND c.relkind IN ('r', 'p', 'S')")
+        ).all()  # fmt: skip
+        assert "stories" in tables and "story_embeddings" in tables
+        for role in ("anon", "authenticated"):
+            for table in tables:
+                for priv in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+                    if priv != "SELECT" and table.endswith("_seq"):
+                        continue
+                    query = "SELECT has_table_privilege(:r, :t, :p)"
+                    assert not conn.scalar(text(query), {"r": role, "t": table, "p": priv}), (role, table, priv)
+            granted = conn.scalar(
+                text("SELECT count(*) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace "
+                     "AND has_function_privilege(:r, p.oid, 'EXECUTE') AND p.proname = 'match_story_embeddings'"),
+                {"r": role},
+            )  # fmt: skip
+            assert granted == 0
     eng.dispose()
