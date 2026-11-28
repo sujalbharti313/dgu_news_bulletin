@@ -158,15 +158,28 @@ def _text_issues(value: str, field: str, path: str, limits: Limits, *, required:
     return issues
 
 
-def validate_content(content: EditionContent, limits: Limits, *, min_stories: int = 0) -> list[Issue]:
-    """Structural and editorial rules. Database checks (source links exist, candidates are eligible, URLs not
-    already published) are done separately by the service before approval and publication."""
+def validate_content(
+    content: EditionContent, limits: Limits, *, min_stories: int = 0, max_stories: int | None = None
+) -> list[Issue]:
+    """Structural and editorial rules. `max_stories` is the edition's story limit (`selection.target_stories`):
+    admins may add candidates while editing, but an edition above the limit cannot be approved or published.
+    Database checks (source links exist, candidates are eligible, URLs not already published) are done separately by
+    the service before approval and publication."""
     issues: list[Issue] = []
     for field in ("title", "introduction"):
         issues += _text_issues(getattr(content, field), field, field, limits, required=True)
     issues += _text_issues(content.editorial_note, "editorial_note", "editorial_note", limits, required=False)
     if not content.stories:
         issues.append(Issue(severity="error", code="no_stories", message="The edition has no stories.", path="stories"))
+    elif max_stories is not None and len(content.stories) > max_stories:
+        issues.append(
+            Issue(
+                severity="error",
+                code="too_many_stories",
+                message=f"{len(content.stories)} stories: an edition has at most {max_stories}. Remove some.",
+                path="stories",
+            )
+        )
     elif len(content.stories) < min_stories:
         issues.append(
             Issue(
