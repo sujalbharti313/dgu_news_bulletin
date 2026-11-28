@@ -3,6 +3,20 @@ name = "ai-campus-backend"
 version = "0.2.0"
 description = "Public read-only REST API for the AI//CAMPUS bulletin"
 requires-python = ">=3.12"
+# Same direct pins as requirements.in (tests/test_deployment_config.py keeps them equal). Listed here too because
+# Vercel's Python runtime may install from pyproject.toml instead of requirements.txt when both exist.
+dependencies = [
+    "fastapi==0.162.0",
+    "uvicorn[standard]==0.54.0",
+    "pydantic==2.14.1",
+    "pydantic-settings==2.16.1",
+    "sqlalchemy==2.1.6",
+    "psycopg[binary]==3.3.6",
+    "alembic==1.20.1",
+    "httpx==0.28.1",
+    "feedparser==6.0.11",
+    "google-genai==2.34.0",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

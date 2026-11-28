@@ -191,6 +191,7 @@ class IngestionRunner:
                 reason=message,
                 duration_ms=(time.perf_counter() - started) * 1000,
                 job_id=str(job_id) if job_id else None,
+                error_type=type(exc).__name__,
             )
         finally:
             if http is not None:

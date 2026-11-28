@@ -47,6 +47,9 @@ Never put API keys, database credentials or OAuth secrets in this frontend.
 
 ## Deploy on Vercel
 
+Production setup (website, API, database, scheduler, environment variables, recovery): see
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Non-technical troubleshooting: [docs/HANDOVER_GUIDE.md](docs/HANDOVER_GUIDE.md).
+
 1. Push this folder to a GitHub repository.
 2. In Vercel, **Add New → Project**, import the repository. Framework preset: Next.js (defaults are correct).
 3. Optionally add `NEXT_PUBLIC_API_BASE_URL` and `NEXT_PUBLIC_SITE_URL` under **Settings → Environment Variables**.

@@ -182,3 +182,30 @@ def test_gmail_source_runs_when_configured():
     staged = [e["item"] for e in store.items.values()]
     assert {i.source_type for i in staged} == {"gmail"} and all(i.feed_identifier == "gmail:18c1" for i in staged)
     assert store.last_cursor("tldr-ai")["processed_ids"] == ["18c1"]
+
+
+def test_gmail_sign_in_failure_is_reported_for_alerting(capsys):
+    """Stage 4.3: an expired/revoked Gmail token is marked so the scheduler can turn its run red (exit code 4)."""
+    from scripts.ingest import GMAIL_SIGN_IN_FAILED, _needs_gmail_sign_in
+
+    fake = FakeGoogle({}, token_status=400)
+    report = runner(
+        [rss("good", "lab.example.com"), GMAIL],
+        handler=lambda request: fake(request) if "google" in request.url.host else feed_handler(request),
+        gmail_client_id="cid",
+        gmail_client_secret="csecret",
+        gmail_refresh_token="test-refresh",
+    ).run()
+    by_key = {s.key: s for s in report.sources}
+    assert by_key["good"].outcome is SourceOutcome.SUCCEEDED  # other sources are still collected
+    assert by_key["tldr-ai"].outcome is SourceOutcome.FAILED and by_key["tldr-ai"].error_type == "GmailAuthError"
+    assert _needs_gmail_sign_in(report) is True and GMAIL_SIGN_IN_FAILED >= 2
+    assert "ACTION NEEDED" in capsys.readouterr().err
+
+
+def test_ordinary_feed_failure_does_not_trigger_the_gmail_alert():
+    from scripts.ingest import _needs_gmail_sign_in
+
+    report = runner([rss("down", "down.example.com")]).run()
+    assert report.sources[0].error_type and report.sources[0].error_type != "GmailAuthError"
+    assert _needs_gmail_sign_in(report) is False

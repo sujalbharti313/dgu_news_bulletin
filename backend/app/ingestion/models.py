@@ -69,6 +69,8 @@ class SourceReport:
     counts: dict[str, int] = field(default_factory=dict)
     duration_ms: float = 0.0
     job_id: str | None = None
+    # Exception class name when the source failed (e.g. "GmailAuthError"); never contains secrets.
+    error_type: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {

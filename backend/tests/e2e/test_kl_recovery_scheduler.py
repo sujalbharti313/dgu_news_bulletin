@@ -225,7 +225,7 @@ def test_schedule_order_locking_and_permissions():
     assert wf["concurrency"] == {"group": "ai-campus-pipeline", "cancel-in-progress": False}
     assert wf["permissions"] == {"contents": "read"}
     job = wf["jobs"]["pipeline"]
-    assert 0 < job["timeout-minutes"] <= 60
+    assert 0 < job["timeout-minutes"] <= 120  # bounded; 90 since Stage 4.3 (a real run took 44 min)
     names = [s.get("name", "") for s in job["steps"]]
     order = [
         next(i for i, n in enumerate(names) if n.startswith(p))

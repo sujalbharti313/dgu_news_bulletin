@@ -9,7 +9,8 @@
     python -m scripts.ingest purge                         # delete expired staged items and old job rows
     python -m scripts.ingest status                        # last outcome per source
 
-Exit codes: 0 every attempted source succeeded, 1 some or all failed, 2 configuration problem.
+Exit codes: 0 every attempted source succeeded, 1 some or all failed, 2 configuration problem,
+4 Google refused the Gmail sign-in (needs a person to renew the token; the scheduler run turns red).
 Nothing is ever published by this command.
 """
 
@@ -56,6 +57,24 @@ def _print_report(report, as_json: bool) -> None:
             print(f"            {s.reason}")
 
 
+# Exit code when Google refused the Gmail sign-in (expired or revoked refresh token). Unlike a feed that is down for
+# a day, this never fixes itself: a person must renew the token. The scheduler treats exit codes of 2 and above as a
+# failure, so the run turns red and GitHub emails the repository owner. The other sources were still collected.
+GMAIL_SIGN_IN_FAILED = 4
+
+
+def _needs_gmail_sign_in(report) -> bool:
+    if not any(s.error_type == "GmailAuthError" for s in report.sources):
+        return False
+    print(
+        "\nACTION NEEDED: Google refused the Gmail sign-in for the TLDR AI newsletter (token expired or revoked).\n"
+        "The other news sources were collected normally. To fix it, renew the Gmail token: see\n"
+        "docs/HANDOVER_GUIDE.md, section 'Gmail stopped working'.",
+        file=sys.stderr,
+    )
+    return True
+
+
 def cmd_check(settings: Settings, _args) -> int:
     path = resolve_sources_path(settings.ingestion_sources_file)
     sources = load_sources(settings.ingestion_sources_file)
@@ -90,6 +109,8 @@ def cmd_run(settings: Settings, args) -> int:
         print(f"Ingesting into {describe_database_target(settings)}", file=sys.stderr)
         report = IngestionRunner(settings, SqlIngestionStore(db)).run(args.source)
         _print_report(report, args.json)
+        if _needs_gmail_sign_in(report):
+            return GMAIL_SIGN_IN_FAILED
         return 0 if report.status == "succeeded" else 1
     finally:
         db.dispose()
