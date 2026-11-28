@@ -44,7 +44,8 @@ concurrency:
 jobs:
   pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    # The 28 Nov 2026 run took 44 minutes (ranking alone 34); 90 leaves headroom. Free on this public repository.
+    timeout-minutes: 90
     defaults:
       run:
         working-directory: backend
@@ -96,7 +97,9 @@ jobs:
         if: steps.config.outputs.skip != 'true' && env.ONLY_EDITION != 'true' && env.ONLY_CLEANUP != 'true'
         run: |
           problems=0
-          step() {  # exit 0 = ok, 1 = partial (warning, e.g. one feed failed or stories still pending), 2+ = error
+          # exit 0 = ok, 1 = partial (warning, e.g. one feed failed or stories still pending), 2+ = error. Ingestion exits
+          # 4 when Google refuses the Gmail sign-in (token expired): the run turns red so GitHub emails the owner.
+          step() {
             name="$1"; shift
             set +e; "$@"; code=$?; set -e
             if [ "$code" -eq 1 ]; then echo "::warning::$name finished partially (exit 1); see the log above."; fi

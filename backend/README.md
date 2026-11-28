@@ -1231,7 +1231,7 @@ redeploy it.
 
 Vercel functions stop after 60 seconds. Generation therefore runs in GitHub Actions, and Regenerate from the
 admin page uses one short Gemini attempt. Render's free web service, with the Dockerfile, also works, but it
-sleeps when idle. These deployment files have not been tried on a live Vercel account.
+sleeps when idle. The full production procedure is in [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md).
 
 ### Commands
 
