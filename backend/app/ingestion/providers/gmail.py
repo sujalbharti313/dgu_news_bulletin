@@ -132,9 +132,13 @@ def extract_bodies(message: dict) -> tuple[str | None, str | None]:
     return html_body, text_body
 
 
-def sender_allowed(message: dict, allowed: list[str]) -> bool:
-    addresses = [addr.lower() for _, addr in getaddresses([_header(message, "From") or ""]) if addr]
-    return len(addresses) == 1 and addresses[0] in allowed
+def sender_allowed(message: dict, allowed: list[str], allowed_names: list[str] | None = None) -> bool:
+    senders = [(name, addr.lower()) for name, addr in getaddresses([_header(message, "From") or ""]) if addr]
+    if len(senders) != 1 or senders[0][1] not in allowed:
+        return False
+    if allowed_names:
+        return " ".join(senders[0][0].split()).casefold() in allowed_names
+    return True
 
 
 def collect_gmail(
@@ -172,7 +176,7 @@ def collect_gmail(
         internal_ms = int(message.get("internalDate") or 0)
         newest_internal = max(newest_internal or 0, internal_ms)
         processed.append(message_id)
-        if not sender_allowed(message, source.allowed_senders):
+        if not sender_allowed(message, source.allowed_senders, source.allowed_sender_names):
             counts["messages_ignored_sender"] += 1
             continue
         html_body, text_body = extract_bodies(message)
