@@ -50,7 +50,7 @@ from app.editions.content import (
 )
 from app.editions.schedule import due_weeks, edition_slug
 from app.editions.selection import SELECTABLE, addable_candidates, build_story, select_candidates
-from app.editions.states import EDITABLE, REGENERATABLE, after_edit, allowed_actions, transition
+from app.editions.states import EDITABLE, REGENERATABLE, after_edit, allowed_actions, can_transition, transition
 from app.ingestion.store import SqlIngestionStore
 from app.intelligence.contract import StoryAnalysis
 from app.models import (
@@ -257,7 +257,10 @@ class EditionService:
         return {r.cluster_id: StoryAnalysis.model_validate(r.analysis) for r in rows if r.analysis}
 
     def _validate(self, content: EditionContent) -> list[Issue]:
-        issues = validate_content(content, self.config.limits, min_stories=self.config.selection.min_stories)
+        sel = self.config.selection
+        issues = validate_content(
+            content, self.config.limits, min_stories=sel.min_stories, max_stories=sel.target_stories
+        )
         if content.stories and content.composition.get("mode") == "stage33_text":
             issues.append(
                 Issue(
@@ -1281,6 +1284,8 @@ class EditionService:
         with self.db.write_session() as s:
             edition = self._lock(s, edition_id)
             self._check_expected(edition, expected_revision)
+            if not can_transition(edition.status, S.ARCHIVED):
+                raise errors.invalid_state(f"An edition in status '{edition.status}' cannot be archived.")
             edition.status = transition(edition.status, S.ARCHIVED)
             self._audit(s, edition.id, A.ARCHIVED, actor, revision=edition.current_revision)
             return {"status": edition.status, "revision": edition.current_revision}
