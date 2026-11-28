@@ -131,3 +131,28 @@ def test_revoked_refresh_token_is_an_auth_error_without_leaking_it():
 def test_extract_bodies_ignores_attachments():
     html_body, text_body = extract_bodies(message("1", "x@example.com", 0))
     assert "<html>" in html_body and text_body.startswith("TLDR AI")
+
+
+def test_sender_name_filter_keeps_only_the_named_newsletter():
+    """TLDR sends several editions from one address; only the "TLDR AI" display name is parsed."""
+    fake = FakeGoogle(
+        {
+            "18c1": message("18c1", "TLDR AI <dan@tldrnewsletter.com>", 1_793_650_000_000),
+            "18c2": message("18c2", "TLDR <dan@tldrnewsletter.com>", 1_793_660_000_000),
+            "18c3": message("18c3", '"tldr  ai" <Dan@TLDRnewsletter.com>', 1_793_670_000_000),
+            "18c4": message("18c4", "dan@tldrnewsletter.com", 1_793_680_000_000),
+        }
+    )
+    source = SOURCE.model_copy(update={"allowed_sender_names": ["tldr ai"]})
+    result = collect_gmail(source, client_for(fake), None, now=NOW, max_items=100)
+    assert result.counts["messages_processed"] == 2 and result.counts["messages_ignored_sender"] == 2
+    assert {i.feed_identifier for i in result.items} == {"gmail:18c1", "gmail:18c3"}
+    assert result.cursor["processed_ids"] == ["18c1", "18c2", "18c3", "18c4"]
+
+
+def test_sender_names_are_normalised_in_config():
+    source = SOURCE.model_copy(update={})
+    parsed = GmailSourceConfig.model_validate({**source.model_dump(), "allowed_sender_names": ["  TLDR   AI "]})
+    assert parsed.allowed_sender_names == ["tldr ai"]
+    with pytest.raises(ValueError):
+        GmailSourceConfig.model_validate({**source.model_dump(), "allowed_sender_names": ["   "]})

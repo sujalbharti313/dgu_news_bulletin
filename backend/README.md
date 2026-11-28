@@ -450,8 +450,9 @@ dry run once to confirm each before relying on it, and add Indian sources only a
    refresh token once.
 5. Put `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` and `GMAIL_REFRESH_TOKEN` in `backend/.env` or your host's
    secret settings. Never in the repository, chat, or the frontend.
-6. Check the query: in Gmail, search `from:dan@tldrnewsletter.com subject:"TLDR AI"` and confirm it finds the
-   issues and that the sender address matches. If not, edit `query` and `allowed_senders` for `tldr-ai`.
+6. Check the query: in Gmail, search `from:dan@tldrnewsletter.com` and confirm it finds the issues. TLDR sends
+   all its editions from that address with headline-only subjects, so `allowed_sender_names = ["TLDR AI"]`
+   keeps only the AI edition (by the From display name). If either changes, edit `tldr-ai` in the sources file.
 7. Test: `python -m scripts.ingest run --dry-run --source tldr-ai`.
 
 Revoking: remove the app at https://myaccount.google.com/permissions. The next run reports the source as

@@ -71,9 +71,13 @@ type = "gmail"
 name = "TLDR AI"
 category = "newsletter"
 # Gmail search syntax. Keep it narrow; allowed_senders is checked again on every message.
-query = 'from:dan@tldrnewsletter.com subject:"TLDR AI"'
+# TLDR sends every edition from the same address and its subjects are only headlines, so the
+# newsletter is picked by the sender's display name ("TLDR AI", not "TLDR"), checked in code on every
+# message. The other editions are fetched and skipped (about one a day). Confirmed 2026-11-28.
+query = 'from:dan@tldrnewsletter.com'
 allowed_senders = ["dan@tldrnewsletter.com"]
+allowed_sender_names = ["TLDR AI"]
 parser = "tldr"
-max_messages = 10
+max_messages = 20
 initial_lookback_days = 7
-notes = "Skipped automatically until GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET and GMAIL_REFRESH_TOKEN are set. Confirm the sender address against a real issue in the mailbox."
+notes = "Skipped automatically until GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET and GMAIL_REFRESH_TOKEN are set. Sender and display name confirmed against the real mailbox on 2026-11-28."

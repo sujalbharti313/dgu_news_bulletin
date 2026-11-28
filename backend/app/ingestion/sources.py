@@ -59,6 +59,9 @@ class GmailSourceConfig(_SourceBase):
     query: str = Field(min_length=1, max_length=500)
     # Messages whose From address is not listed are ignored even if the query matched them.
     allowed_senders: list[str] = Field(min_length=1, max_length=20)
+    # Optional: the From display name must also be one of these (case-insensitive). TLDR sends several
+    # newsletters from the same address ("TLDR", "TLDR AI", ...), so the name tells them apart.
+    allowed_sender_names: list[str] = Field(default_factory=list, max_length=20)
     parser: Literal["tldr"] = "tldr"
     max_messages: int = Field(default=10, ge=1, le=100)
 
@@ -70,6 +73,17 @@ class GmailSourceConfig(_SourceBase):
             value = value.strip().lower()
             if value.count("@") != 1 or " " in value or len(value) > 254:
                 raise ValueError(f"not an email address: {value!r}")
+            cleaned.append(value)
+        return cleaned
+
+    @field_validator("allowed_sender_names")
+    @classmethod
+    def _normalise_names(cls, values: list[str]) -> list[str]:
+        cleaned = []
+        for value in values:
+            value = " ".join(value.split()).casefold()
+            if not value or len(value) > 200:
+                raise ValueError(f"not a sender name: {value!r}")
             cleaned.append(value)
         return cleaned
 
